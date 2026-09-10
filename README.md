@@ -71,8 +71,8 @@ metadata:
 spec:
   serviceAccountName: composer
 
-  inputs:
-  # Layers, merged in order, later ones winning. A base can live in a ConfigMap
+  variables:
+  # Merged in order, later entries winning. A base can live in a ConfigMap
   # somebody else maintains, with overrides written here.
   - values:
       prefix: demo
@@ -84,13 +84,13 @@ spec:
     name: tenant
 
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         tenant = require(sources.tenant, "data.tenantId")
         return {
             "settings": {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
-                "metadata": {"name": inputs.prefix + "-settings"},
+                "metadata": {"name": variable.prefix + "-settings"},
                 "data": {"tenantId": tenant},
             },
         }
@@ -127,7 +127,7 @@ that is not ready. One rule covers both.
 A composition advances in phases by returning only what it can:
 
 ```python
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     out["identity"] = {...}                      # phase one
 
@@ -136,7 +136,7 @@ def compose(inputs, sources, observed):
         pending("principalId on the app identity")
         return out                               # the identity is applied anyway
 
-    for role in inputs.roles:                    # phase two
+    for role in variable.roles:                    # phase two
         out["ra-" + role.name] = {...}
     return out
 ```
@@ -202,7 +202,7 @@ edges from expression references. Weft does not infer: sources are declared, and
 whether an absent one should block is a line in the program.
 
 ```python
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     # Nothing below reads a field off the database. Its existence is the
     # requirement.
     if not sources.database:
@@ -213,7 +213,7 @@ Which also expresses what a flag on the source could not — a gate that depends
 on configuration:
 
 ```python
-if inputs.useSql and not sources.database:
+if variable.useSql and not sources.database:
     return wait("SQL is enabled but the database is not there yet")
 ```
 

@@ -12,9 +12,9 @@ import (
 	yaml "sigs.k8s.io/yaml"
 
 	"github.com/alethic/weft/api/v1alpha1"
-	"github.com/alethic/weft/internal/inputs"
 	"github.com/alethic/weft/internal/jsonutil"
 	"github.com/alethic/weft/internal/kube"
+	"github.com/alethic/weft/internal/variables"
 	"github.com/alethic/weft/internal/watches"
 )
 
@@ -23,52 +23,52 @@ var (
 	secretGVK    = schema.GroupVersionKind{Version: "v1", Kind: "Secret"}
 )
 
-// resolveInputs assembles the layers into the single mapping a program sees.
+// resolveVariables assembles the entries into the single mapping a program sees.
 //
-// Layers merge in order and later ones win, so a base held in a ConfigMap
+// Entries merge in order and later ones win, so a base held in a ConfigMap
 // somebody else maintains can be overridden inline. The program cannot tell
 // where any value came from, which is what makes moving a setting between the
 // two not a change to the composition.
 //
 // Every read is impersonated, like every other read: a Weave can take
 // configuration only from objects its ServiceAccount could read directly.
-func (r *WeaveReconciler) resolveInputs(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (map[string]any, error) {
+func (r *WeaveReconciler) resolveVariables(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (map[string]any, error) {
 	out := map[string]any{}
 
-	for i, layer := range weave.Spec.Inputs {
-		values, err := r.resolveInputLayer(ctx, c, layer, i)
+	for i, entry := range weave.Spec.Variables {
+		values, err := r.resolveVariable(ctx, c, entry, i)
 		if err != nil {
 			return nil, err
 		}
-		out = inputs.Merge(out, values)
+		out = variables.Merge(out, values)
 	}
 	return out, nil
 }
 
-func (r *WeaveReconciler) resolveInputLayer(ctx context.Context, c *kube.Client, layer v1alpha1.InputSource, index int) (map[string]any, error) {
+func (r *WeaveReconciler) resolveVariable(ctx context.Context, c *kube.Client, entry v1alpha1.Variable, index int) (map[string]any, error) {
 	switch {
-	case layer.Values != nil:
-		return jsonutil.DecodeObject(layer.Values), nil
+	case entry.Values != nil:
+		return jsonutil.DecodeObject(entry.Values), nil
 
-	case layer.ConfigMap != nil:
-		return r.readInputObject(ctx, c, configMapGVK, *layer.ConfigMap, index, false)
+	case entry.ConfigMap != nil:
+		return r.readVariableObject(ctx, c, configMapGVK, *entry.ConfigMap, index, false)
 
-	case layer.Secret != nil:
-		return r.readInputObject(ctx, c, secretGVK, *layer.Secret, index, true)
+	case entry.Secret != nil:
+		return r.readVariableObject(ctx, c, secretGVK, *entry.Secret, index, true)
 
 	default:
 		// The CRD's validation rule should have caught this at admission.
 		return nil, degradedf(ReasonInvalidSpec,
-			"inputs[%d] sets none of values, configMap or secret", index)
+			"variables[%d] sets none of values, configMap or secret", index)
 	}
 }
 
-// readInputObject reads one ConfigMap or Secret and turns it into a mapping.
-func (r *WeaveReconciler) readInputObject(
+// readVariableObject reads one ConfigMap or Secret and turns it into a mapping.
+func (r *WeaveReconciler) readVariableObject(
 	ctx context.Context,
 	c *kube.Client,
 	gvk schema.GroupVersionKind,
-	ref v1alpha1.InputRef,
+	ref v1alpha1.VariableRef,
 	index int,
 	encoded bool,
 ) (map[string]any, error) {
@@ -82,21 +82,21 @@ func (r *WeaveReconciler) readInputObject(
 		}
 		// A composition built on configuration that has not arrived is not
 		// ready, and this is the ordinary shape of that: waiting, not failing.
-		return nil, waitingf(ReasonInputMissing,
-			"inputs[%d] needs %s %q, which does not exist", index, gvk.Kind, ref.Name)
+		return nil, waitingf(ReasonVariableMissing,
+			"variables[%d] needs %s %q, which does not exist", index, gvk.Kind, ref.Name)
 
 	default:
 		var perm *kube.PermissionError
 		if errors.As(err, &perm) {
 			return nil, degradedf(ReasonForbidden,
-				"reading inputs[%d]:\n%s", index, perm.Error())
+				"reading variables[%d]:\n%s", index, perm.Error())
 		}
-		return nil, fmt.Errorf("reading inputs[%d] (%s %q): %w", index, gvk.Kind, ref.Name, err)
+		return nil, fmt.Errorf("reading variables[%d] (%s %q): %w", index, gvk.Kind, ref.Name, err)
 	}
 
 	data, err := inputData(obj, encoded)
 	if err != nil {
-		return nil, degradedf(ReasonInvalidSpec, "inputs[%d] (%s %q): %v", index, gvk.Kind, ref.Name, err)
+		return nil, degradedf(ReasonInvalidSpec, "variables[%d] (%s %q): %v", index, gvk.Kind, ref.Name, err)
 	}
 
 	if ref.Key == "" {
@@ -112,8 +112,8 @@ func (r *WeaveReconciler) readInputObject(
 		if ref.Optional {
 			return nil, nil
 		}
-		return nil, waitingf(ReasonInputMissing,
-			"inputs[%d] needs the key %q of %s %q, which is not set", index, ref.Key, gvk.Kind, ref.Name)
+		return nil, waitingf(ReasonVariableMissing,
+			"variables[%d] needs the key %q of %s %q, which is not set", index, ref.Key, gvk.Kind, ref.Name)
 	}
 
 	// A single key holding a document, which is how a values.yaml ends up in a
@@ -121,7 +121,7 @@ func (r *WeaveReconciler) readInputObject(
 	var parsed map[string]any
 	if err := yaml.Unmarshal([]byte(raw), &parsed); err != nil {
 		return nil, degradedf(ReasonInvalidSpec,
-			"inputs[%d]: the key %q of %s %q is not a YAML mapping: %v",
+			"variables[%d]: the key %q of %s %q is not a YAML mapping: %v",
 			index, ref.Key, gvk.Kind, ref.Name, err)
 	}
 	return parsed, nil
@@ -153,9 +153,9 @@ func inputData(obj *unstructured.Unstructured, encoded bool) (map[string]string,
 	return out, nil
 }
 
-// inputWatchKeys returns the objects the inputs read, so a change to one wakes
+// variableWatchKeys returns the objects the variables read, so a change to one wakes
 // the Weave the same way a change to a source does.
-func inputWatchKeys(weave *v1alpha1.Weave) []watches.Key {
+func variableWatchKeys(weave *v1alpha1.Weave) []watches.Key {
 	var keys []watches.Key
 	seen := map[schema.GroupVersionKind]bool{}
 
@@ -171,11 +171,11 @@ func inputWatchKeys(weave *v1alpha1.Weave) []watches.Key {
 		})
 	}
 
-	for _, layer := range weave.Spec.Inputs {
+	for _, entry := range weave.Spec.Variables {
 		switch {
-		case layer.ConfigMap != nil:
+		case entry.ConfigMap != nil:
 			add(configMapGVK)
-		case layer.Secret != nil:
+		case entry.Secret != nil:
 			add(secretGVK)
 		}
 	}

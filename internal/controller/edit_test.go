@@ -25,7 +25,7 @@ func TestEditingReplacesRatherThanOrphans(t *testing.T) {
 	})
 
 	h.create("editable", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "thing": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing-one"}},
     }
@@ -40,7 +40,7 @@ def compose(inputs, sources, observed):
 	// new one under that key, so nothing would remember the old.
 	w := h.weave("editable")
 	w.Spec.Program = `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "thing": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing-two"}},
     }
@@ -75,7 +75,7 @@ func TestEditingTheKindReplacesTheObject(t *testing.T) {
 	})
 
 	h.create("kindchange", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "payload": {
             "apiVersion": "v1", "kind": "ConfigMap",
@@ -92,7 +92,7 @@ def compose(inputs, sources, observed):
 
 	w := h.weave("kindchange")
 	w.Spec.Program = `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "payload": {
             "apiVersion": "v1", "kind": "Secret",
@@ -129,7 +129,7 @@ func TestEditingConvergesOnTheNewShape(t *testing.T) {
 	})
 
 	h.create("shape", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     for n in ["keep", "drop-a", "drop-b"]:
         out[n] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}}
@@ -145,7 +145,7 @@ def compose(inputs, sources, observed):
 
 	w := h.weave("shape")
 	w.Spec.Program = `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     for n in ["keep", "added-a", "added-b"]:
         out[n] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}}
@@ -182,7 +182,7 @@ func TestReplacedObjectsAreRemovedInOrder(t *testing.T) {
 	})
 
 	h.create("ordered", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     for n in ["base", "middle", "top"]:
         out[n] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n + "-v1"}}
@@ -201,7 +201,7 @@ def compose(inputs, sources, observed):
 
 	w := h.weave("ordered")
 	w.Spec.Program = `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     for n in ["base", "middle", "top"]:
         out[n] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n + "-v2"}}
@@ -255,7 +255,7 @@ func TestRefusesToTakeOverAnExistingObject(t *testing.T) {
 	h.configMap("preexisting", map[string]string{"owner": "somebody-else"})
 
 	h.create("greedy", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "grab": {
             "apiVersion": "v1", "kind": "ConfigMap",
@@ -300,7 +300,7 @@ func TestAdoptsWhenTheObjectConsents(t *testing.T) {
 	}
 
 	h.create("adopter", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "onboarded": {
             "apiVersion": "v1", "kind": "ConfigMap",
@@ -339,7 +339,7 @@ func TestAdoptionAnnotationIsSpecific(t *testing.T) {
 	}
 
 	h.create("hopeful", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "x": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "spoken-for"}},
     }
@@ -367,7 +367,7 @@ func TestRefusesTwoKeysForOneObject(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("colliding", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "first": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "shared"}},
         "second": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "shared"}},
@@ -389,7 +389,7 @@ func TestOrphanPropagationKeepsTheResources(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("orphaning", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "keeper": {
             "apiVersion": "v1", "kind": "ConfigMap",
@@ -447,7 +447,7 @@ func TestDefaultDeletionStillRemovesTheResources(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("cascading", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "goes": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "goes"}},
     }

@@ -63,10 +63,10 @@ func builtins() starlark.StringDict {
 // predeclaredNames is the set of names resolvable outside the Starlark
 // universe.
 //
-// inputs, sources and observed are deliberately absent: they are parameters of
-// compose(), not globals. Leaving them out turns a module-level reference into
-// "undefined: inputs" at compile time instead of a confusing lookup failure
-// during evaluation.
+// The parameters of compose() are deliberately absent: they are parameters, not
+// globals. Leaving them out turns a module-level reference into "undefined:
+// variable" at compile time instead of a confusing lookup failure during
+// evaluation.
 var predeclaredNames = func() map[string]bool {
 	m := map[string]bool{}
 	for k := range builtins() {

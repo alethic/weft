@@ -173,9 +173,9 @@ func watchKeys(weave *v1alpha1.Weave) []watches.Key {
 		}
 	}
 
-	// Configuration is watched too. A ConfigMap holding a base layer changes
+	// Configuration is watched too. A ConfigMap holding base values changes
 	// what the composition produces just as surely as a source does.
-	for _, k := range inputWatchKeys(weave) {
+	for _, k := range variableWatchKeys(weave) {
 		if !seen[k] {
 			seen[k] = true
 			keys = append(keys, k)

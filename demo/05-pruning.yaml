@@ -4,7 +4,7 @@
 # straight away. It is held for pruneDelay first:
 #
 #   kubectl -n weft-demo patch weave pruning --type=json \
-#     -p '[{"op":"remove","path":"/spec/inputs/regions/1"}]'
+#     -p '[{"op":"remove","path":"/spec/variables/0/values/regions/1"}]'
 #   kubectl -n weft-demo get weave pruning \
 #     -o jsonpath='{range .status.inventory[*]}{.key}{" missing="}{.missingCount}{" since="}{.missingSince}{"\n"}{end}'
 #
@@ -23,16 +23,16 @@ metadata:
   namespace: weft-demo
 spec:
   serviceAccountName: composer
-  inputs:
+  variables:
     - values:
         regions:
           - eastus
           - westeurope
           - southeastasia
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         out = {}
-        for region in inputs.regions:
+        for region in variable.regions:
             out["region-" + region] = {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",

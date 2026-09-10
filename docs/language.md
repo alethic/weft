@@ -6,13 +6,13 @@ deterministic dialect of Python — in-process, once per reconcile.
 ## The contract
 
 ```python
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"key": {...resource...}, ...}
 ```
 
 | argument | is |
 |---|---|
-| `inputs` | `spec.inputs`, assembled from its layers into one mapping. |
+| `variable` | `spec.variables`, assembled into one mapping. Keys, not resources. |
 | `sources` | declared sources by id, resolved through an impersonated read. A source that does not exist is `None`, and whether that should block is the program's decision. |
 | `observed` | resources this Weave previously created, keyed by inventory key, read back live with current status. |
 
@@ -48,7 +48,7 @@ There is no `required` flag on a source, because the flag could only ever say
 "always". Written here the gate can say something a flag could not:
 
 ```python
-if inputs.useSql and not sources.database:
+if variable.useSql and not sources.database:
     return wait("SQL is enabled but the database is not there yet")
 ```
 
@@ -83,12 +83,16 @@ iteration is harmless.
 
 Use `wait()` when nothing can be produced. Use `pending()` when some of it can.
 
-## Where inputs come from
+## Where variables come from
 
-`spec.inputs` is a list of layers, merged in order, later ones winning:
+Variables are keys; sources are resources. A ConfigMap named here is read for
+the values inside it, and never for the sake of an ordering edge — for that,
+declare it as a source and gate on it.
+
+`spec.variables` is a list, merged in order, later entries winning:
 
 ```yaml
-inputs:
+variables:
   # A base somebody else maintains.
   - configMap:
       name: platform
@@ -107,7 +111,7 @@ inputs:
         tag: v2
 ```
 
-Mappings merge key by key, so the last layer above overrides `image.tag`
+Mappings merge key by key, so the last entry above overrides `image.tag`
 without restating `image.repository`. Anything else replaces outright, lists
 included — the rule Helm values follow.
 
@@ -117,9 +121,9 @@ setting from inline to a ConfigMap is not a change to the composition.
 | | |
 |---|---|
 | `values` | Written in the `Weave`. Plain YAML, never templated. |
-| `configMap` / `secret` | Every entry of `data` becomes one input, with its value as a string. A `Secret` is decoded, so it reads the same as a `ConfigMap`. |
+| `configMap` / `secret` | Every entry of `data` becomes one variable, with its value as a string. A `Secret` is decoded, so it reads the same as a `ConfigMap`. |
 | `key` | Take one entry instead, parsing its content as YAML. For a `values.yaml` living in a ConfigMap. |
-| `optional` | Skip the layer when the object is missing. Without it the `Weave` waits. |
+| `optional` | Skip the entry when the object is missing. Without it the `Weave` waits. |
 
 These objects are read through the same impersonated client as everything else,
 so a `Weave` can only take configuration from objects its ServiceAccount could
@@ -127,7 +131,7 @@ read directly — and they are watched, so editing one reconciles the `Weave`
 without touching it.
 
 Be aware that a value reaching a program can be written into any resource that
-ServiceAccount may create. A `Secret` layer is a convenience, not a boundary.
+ServiceAccount may create. A `Secret` entry is a convenience, not a boundary.
 
 ## Reading fields
 
@@ -194,7 +198,7 @@ a builtin rather than something to assemble by hand.
 
 ```python
 "data": {"values.yaml": to_yaml({
-    "image": {"repository": inputs.image, "tag": "latest"},
+    "image": {"repository": variable.image, "tag": "latest"},
     "env": [{"name": "SB", "value": sb_endpoint}],
 })}
 ```
@@ -271,7 +275,7 @@ rather than taken over, unless the object itself carries
 Two phases and a fan-out, which between them cover most of what compositions do:
 
 ```python
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
 
     rg_id = require(sources.resourceGroup, "status.atProvider.id")
@@ -280,18 +284,18 @@ def compose(inputs, sources, observed):
         "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
         "kind": "UserAssignedIdentity",
         "metadata": {
-            "name": inputs.prefix + "-app",
+            "name": variable.prefix + "-app",
             "annotations": {
                 "crossplane.io/external-name":
-                    rg_id + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/" + inputs.prefix + "-app",
+                    rg_id + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/" + variable.prefix + "-app",
             },
         },
         "spec": {
-            "providerConfigRef": inputs.providerConfigRef,
+            "providerConfigRef": variable.providerConfigRef,
             "forProvider": {
-                "name": inputs.prefix + "-app",
-                "location": inputs.location,
-                "resourceGroupName": inputs.resourceGroupName,
+                "name": variable.prefix + "-app",
+                "location": variable.location,
+                "resourceGroupName": variable.resourceGroupName,
             },
         },
     }
@@ -302,18 +306,18 @@ def compose(inputs, sources, observed):
     if not principal:
         return out
 
-    for role in inputs.roles:
+    for role in variable.roles:
         out["ra-" + role.name] = {
             "apiVersion": "authorization.azure.m.upbound.io/v1beta1",
             "kind": "RoleAssignment",
             "metadata": {
-                "name": inputs.prefix + "-" + role.name,
+                "name": variable.prefix + "-" + role.name,
                 # Siblings share a wave so they tear down in one step rather
                 # than one round trip at a time.
                 "annotations": {"weft.run/wave": "1"},
             },
             "spec": {
-                "providerConfigRef": inputs.providerConfigRef,
+                "providerConfigRef": variable.providerConfigRef,
                 "forProvider": {
                     "principalId": principal,
                     "roleDefinitionName": role.roleDefinitionName,

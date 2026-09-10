@@ -198,7 +198,7 @@ func (h *harness) create(name, program string, sources []v1alpha1.Source, values
 		},
 	}
 	if values != "" {
-		w.Spec.Inputs = []v1alpha1.InputSource{
+		w.Spec.Variables = []v1alpha1.Variable{
 			{Values: &apiextensionsv1.JSON{Raw: []byte(values)}},
 		}
 	}
@@ -268,7 +268,7 @@ func TestReconcileAppliesAndOwns(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "abc-123"})
 
 	h.create("app", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "settings": {
             "apiVersion": "v1",
@@ -312,7 +312,7 @@ func TestSteadyStateDoesNotChurn(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "abc"})
 
 	h.create("app", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "settings": {
             "apiVersion": "v1", "kind": "ConfigMap",
@@ -343,7 +343,7 @@ func TestStagingThroughObserved(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "abc"})
 
 	h.create("app", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     out["identity"] = {
         "apiVersion": "v1", "kind": "ConfigMap",
@@ -400,7 +400,7 @@ func TestSourceGateWithoutBeingRead(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("gated", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     if not sources.gate:
         return wait("the gate ConfigMap has not been created yet")
     return {
@@ -445,7 +445,7 @@ func TestPruneWaitsOutTheDelay(t *testing.T) {
 	h.configMap("tenant", map[string]string{"keep": "yes", "extra": "yes"})
 
 	program := `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {"keep": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}}}
     if has(sources.tenant, "data.extra"):
         out["extra"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}}
@@ -520,7 +520,7 @@ func TestReappearanceCancelsThePrune(t *testing.T) {
 	h.configMap("tenant", map[string]string{"extra": "yes"})
 
 	program := `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {"keep": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}}}
     if has(sources.tenant, "data.extra"):
         out["extra"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}}
@@ -566,7 +566,7 @@ func TestOrderedTeardown(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("stack", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     for i, name in enumerate(["base", "middle", "top"]):
         out[name] = {
@@ -647,7 +647,7 @@ func TestProgramFaultIsDegraded(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("broken", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     fail("the role table is empty")
 `, nil, "")
 
@@ -668,7 +668,7 @@ func TestCrossNamespaceOutputIsRefused(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("escapee", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "out": {
             "apiVersion": "v1", "kind": "ConfigMap",
@@ -693,7 +693,7 @@ func TestDeletedOutputIsRecreated(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("healer", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"out": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}}}
 `, nil, "")
 	h.settle("healer", 2)
@@ -729,7 +729,7 @@ func TestEditingTheProgramConverges(t *testing.T) {
 	})
 
 	h.create("editable", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}},
         "b": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "b"}},
@@ -743,7 +743,7 @@ def compose(inputs, sources, observed):
 
 	w := h.weave("editable")
 	w.Spec.Program = `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}}}
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
@@ -771,14 +771,14 @@ func TestRenamingAKeyReplacesTheResource(t *testing.T) {
 	})
 
 	h.create("renamer", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"old": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "old-name"}}}
 `, nil, "")
 	h.settle("renamer", 2)
 
 	w := h.weave("renamer")
 	w.Spec.Program = `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"new": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "new-name"}}}
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
@@ -805,7 +805,7 @@ def compose(inputs, sources, observed):
 func TestFinalizerIsAddedFirst(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("finalized", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {}
 `, nil, "")
 
@@ -823,19 +823,19 @@ def compose(inputs, sources, observed):
 	}
 }
 
-// inputs reach the program with their types intact. An integer that arrives as
+// variables reach the program with their types intact. An integer that arrives as
 // a float comes back out as one, which is a different resource body on every
 // apply.
-func TestInputsKeepTheirTypes(t *testing.T) {
+func TestVariablesKeepTheirTypes(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("typed", `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "out": {
             "apiVersion": "v1", "kind": "ConfigMap",
             "metadata": {"name": "out"},
-            "data": {"replicas": str(inputs.replicas), "doubled": str(inputs.replicas * 2)},
+            "data": {"replicas": str(variable.replicas), "doubled": str(variable.replicas * 2)},
         },
     }
 `, nil, `{"replicas": 3}`)

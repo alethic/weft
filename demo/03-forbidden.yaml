@@ -22,7 +22,7 @@ spec:
       kind: ConfigMap
       name: platform
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         return {
             "should-never-exist": {
                 "apiVersion": "v1",

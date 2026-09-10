@@ -16,7 +16,7 @@ metadata:
 spec:
   serviceAccountName: sweep-env-compose
 
-  inputs:
+  variables:
     - values:
         prefix: sweep-env
         targetConfigMap: sweep-env-values
@@ -62,7 +62,7 @@ spec:
     name: sweep-env
 
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         # A pure ordering edge: nothing below reads a field off the database,
         # but publishing configuration that points at a database which does not
         # exist is worse than publishing nothing.
@@ -107,7 +107,7 @@ spec:
             "values": {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
-                "metadata": {"name": inputs.targetConfigMap},
+                "metadata": {"name": variable.targetConfigMap},
                 # One key holding a whole document. This is the single most
                 # common shape in the compositions this replaces, so it is a
                 # builtin rather than string assembly.

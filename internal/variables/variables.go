@@ -1,14 +1,14 @@
-// Package inputs assembles the configuration layers a program sees.
-package inputs
+// Package variables assembles the configuration entries a program sees.
+package variables
 
 import (
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/jsonutil"
 )
 
-// Merge layers one mapping over another, in place over base.
+// Merge entries one mapping over another, in place over base.
 //
-// Mappings merge key by key, so a later layer can override one nested setting
+// Mappings merge key by key, so a later entry can override one nested setting
 // without restating the rest. Anything else replaces outright - notably lists,
 // because merging those positionally is never what anybody means. This is the
 // rule Helm values follow, which is the one people already have in their heads.
@@ -33,18 +33,18 @@ func Merge(base, over map[string]any) map[string]any {
 	return base
 }
 
-// Inline merges only the layers written in the Weave itself.
+// Inline merges only the entries written in the Weave itself.
 //
 // It exists for anything that has to understand a composition without a cluster
 // to read the referenced objects from: tests over the shipped examples, and
 // tooling that wants to know what a program would see from its spec alone.
-func Inline(layers []v1alpha1.InputSource) map[string]any {
+func Inline(entries []v1alpha1.Variable) map[string]any {
 	out := map[string]any{}
-	for _, layer := range layers {
-		if layer.Values == nil {
+	for _, entry := range entries {
+		if entry.Values == nil {
 			continue
 		}
-		out = Merge(out, jsonutil.DecodeObject(layer.Values))
+		out = Merge(out, jsonutil.DecodeObject(entry.Values))
 	}
 	return out
 }

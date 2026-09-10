@@ -17,10 +17,10 @@ import (
 
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/eval"
-	"github.com/alethic/weft/internal/inputs"
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/naming"
+	"github.com/alethic/weft/internal/variables"
 )
 
 func load(t *testing.T, path string) *v1alpha1.Weave {
@@ -85,10 +85,10 @@ func TestDemoProgramsCompile(t *testing.T) {
 				sources[src.ID] = resolvedSource(src)
 			}
 			_, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
-				Program:  w.Spec.Program,
-				Inputs:   inputs.Inline(w.Spec.Inputs),
-				Sources:  sources,
-				Observed: map[string]any{},
+				Program:   w.Spec.Program,
+				Variables: variables.Inline(w.Spec.Variables),
+				Sources:   sources,
+				Observed:  map[string]any{},
 			})
 			var pe *eval.ProgramError
 			if errors.As(err, &pe) {
@@ -141,10 +141,10 @@ func TestExamplesEvaluateAgainstNothing(t *testing.T) {
 			}
 
 			res, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
-				Program:  w.Spec.Program,
-				Inputs:   inputs.Inline(w.Spec.Inputs),
-				Sources:  sources,
-				Observed: map[string]any{},
+				Program:   w.Spec.Program,
+				Variables: variables.Inline(w.Spec.Variables),
+				Sources:   sources,
+				Observed:  map[string]any{},
 			})
 
 			var pe *eval.ProgramError
@@ -176,10 +176,10 @@ func TestExamplesProduceTheirFirstWave(t *testing.T) {
 			}
 
 			res, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
-				Program:  w.Spec.Program,
-				Inputs:   inputs.Inline(w.Spec.Inputs),
-				Sources:  sources,
-				Observed: map[string]any{},
+				Program:   w.Spec.Program,
+				Variables: variables.Inline(w.Spec.Variables),
+				Sources:   sources,
+				Observed:  map[string]any{},
 			})
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)

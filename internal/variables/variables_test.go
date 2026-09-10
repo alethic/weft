@@ -1,4 +1,4 @@
-package inputs
+package variables
 
 import (
 	"reflect"
@@ -9,7 +9,7 @@ import (
 	"github.com/alethic/weft/api/v1alpha1"
 )
 
-func TestMergeLaterLayerWins(t *testing.T) {
+func TestMergeLaterEntryWins(t *testing.T) {
 	got := Merge(
 		map[string]any{"a": "base", "b": "base"},
 		map[string]any{"b": "over", "c": "over"},
@@ -20,7 +20,7 @@ func TestMergeLaterLayerWins(t *testing.T) {
 	}
 }
 
-// Mappings merge key by key, so a layer can override one nested setting without
+// Mappings merge key by key, so a entry can override one nested setting without
 // restating everything around it. That is the whole reason a base can live in a
 // ConfigMap somebody else maintains.
 func TestMergeIsDeepForMappings(t *testing.T) {
@@ -82,7 +82,7 @@ func TestMergeHandlesNilBase(t *testing.T) {
 	}
 }
 
-// A layer that resolved to nothing - an optional object that does not exist -
+// A entry that resolved to nothing - an optional object that does not exist -
 // leaves what came before alone.
 func TestMergeWithNothingOver(t *testing.T) {
 	got := Merge(map[string]any{"a": 1}, nil)
@@ -91,14 +91,14 @@ func TestMergeWithNothingOver(t *testing.T) {
 	}
 }
 
-func values(raw string) v1alpha1.InputSource {
-	return v1alpha1.InputSource{Values: &apiextensionsv1.JSON{Raw: []byte(raw)}}
+func values(raw string) v1alpha1.Variable {
+	return v1alpha1.Variable{Values: &apiextensionsv1.JSON{Raw: []byte(raw)}}
 }
 
-func TestInlineMergesOnlyWrittenLayers(t *testing.T) {
-	got := Inline([]v1alpha1.InputSource{
+func TestInlineMergesOnlyWrittenEntries(t *testing.T) {
+	got := Inline([]v1alpha1.Variable{
 		values(`{"a": "first", "shared": "first"}`),
-		{ConfigMap: &v1alpha1.InputRef{Name: "ignored-without-a-cluster"}},
+		{ConfigMap: &v1alpha1.VariableRef{Name: "ignored-without-a-cluster"}},
 		values(`{"b": "second", "shared": "second"}`),
 	})
 
@@ -111,7 +111,7 @@ func TestInlineMergesOnlyWrittenLayers(t *testing.T) {
 // Integers have to survive, or a replica count reaches a program as a float and
 // comes back out as one.
 func TestInlineKeepsTypes(t *testing.T) {
-	got := Inline([]v1alpha1.InputSource{values(`{"replicas": 3, "debug": true}`)})
+	got := Inline([]v1alpha1.Variable{values(`{"replicas": 3, "debug": true}`)})
 	if r, ok := got["replicas"].(int64); !ok || r != 3 {
 		t.Errorf("replicas = %#v, want int64(3)", got["replicas"])
 	}
@@ -120,7 +120,7 @@ func TestInlineKeepsTypes(t *testing.T) {
 	}
 }
 
-func TestInlineWithNoLayers(t *testing.T) {
+func TestInlineWithNoEntries(t *testing.T) {
 	if got := Inline(nil); len(got) != 0 {
 		t.Errorf("got %v, want an empty mapping", got)
 	}

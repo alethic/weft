@@ -107,7 +107,7 @@ The gate is a line in the program rather than a flag on the source, which is
 what lets it be conditional:
 
 ```python
-if inputs.needsLicence and not sources.licence:
+if variable.needsLicence and not sources.licence:
     return wait("no licence ConfigMap in this namespace yet")
 ```
 
@@ -164,7 +164,7 @@ kubectl -n weft-demo patch cm layer-middle --type=merge -p '{"metadata":{"finali
 ```bash
 kubectl apply -f demo/05-pruning.yaml
 kubectl -n weft-demo patch weave pruning --type=json \
-  -p '[{"op":"remove","path":"/spec/inputs/regions/1"}]'
+  -p '[{"op":"remove","path":"/spec/variables/0/values/regions/1"}]'
 ```
 
 Watch `missingCount` and the object:

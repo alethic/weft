@@ -58,7 +58,7 @@ annotations:
             name: tenant
             required: true
         program: |
-          def compose(inputs, sources, observed):
+          def compose(variable, sources, observed):
               return {
                   "settings": {
                       "apiVersion": "v1",

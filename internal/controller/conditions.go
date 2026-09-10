@@ -23,7 +23,7 @@ const (
 	ReasonTearingDown      = "TearingDown"
 	ReasonWatchDegraded    = "WatchDegraded"
 	ReasonNotOurs          = "ResourceNotOurs"
-	ReasonInputMissing     = "InputMissing"
+	ReasonVariableMissing  = "VariableMissing"
 )
 
 // maxMessage keeps a condition inside the API server's limit with room to

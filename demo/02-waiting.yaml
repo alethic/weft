@@ -34,7 +34,7 @@ spec:
       name: licence
 
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         # The ordering gate. Nothing below reads a field off it; its existence
         # is the whole requirement.
         if not sources.licence:

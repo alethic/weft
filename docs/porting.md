@@ -108,7 +108,7 @@ own when the provider writes it back.
 
 `admins-roleassignments` and `admins-sqlcmd` used `range` over
 `.Values.azure.permissions.admin` at *build* time, emitting N copies of an
-entire CronJob. In Weft the list is `spec.inputs` and the loop is in the
+entire CronJob. In Weft the list is `spec.variables` and the loop is in the
 program: one Weave, N outputs. Adding an admin is a one-line edit rather than a
 chart re-render.
 

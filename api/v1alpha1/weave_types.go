@@ -8,7 +8,7 @@ import (
 
 // Source declares an existing resource this composition reads, or waits on.
 //
-// Sources are resources; inputs are keys. A program reaches a source through
+// Sources are resources; variables are keys. A program reaches a source through
 // sources.<id> and gets the whole object, or None when it does not exist.
 //
 // Whether an absent source should block is the program's decision, written in
@@ -20,7 +20,7 @@ import (
 // which also expresses the thing a flag on this struct could not - gating that
 // depends on configuration:
 //
-//	if inputs.useSql and not sources.database:
+//	if variable.useSql and not sources.database:
 //	    return wait("SQL is enabled but the database is not there yet")
 //
 // The list itself is static and declarative, because it is what the permission
@@ -66,10 +66,10 @@ type Source struct {
 	Finalize bool `json:"finalize,omitempty"`
 }
 
-// InputSource is one layer of configuration. Exactly one field is set.
+// Variable is one entry in spec.variables. Exactly one field is set.
 //
 // +kubebuilder:validation:XValidation:rule="(has(self.values) ? 1 : 0) + (has(self.configMap) ? 1 : 0) + (has(self.secret) ? 1 : 0) == 1",message="set exactly one of values, configMap or secret"
-type InputSource struct {
+type Variable struct {
 	// Values is configuration written here. Plain YAML, never templated or
 	// evaluated.
 	//
@@ -85,7 +85,7 @@ type InputSource struct {
 	// ConfigMap takes configuration from a ConfigMap in this namespace.
 	//
 	// +optional
-	ConfigMap *InputRef `json:"configMap,omitempty"`
+	ConfigMap *VariableRef `json:"configMap,omitempty"`
 
 	// Secret takes configuration from a Secret in this namespace.
 	//
@@ -95,11 +95,11 @@ type InputSource struct {
 	// ServiceAccount may create.
 	//
 	// +optional
-	Secret *InputRef `json:"secret,omitempty"`
+	Secret *VariableRef `json:"secret,omitempty"`
 }
 
-// InputRef selects a ConfigMap or Secret to take configuration from.
-type InputRef struct {
+// VariableRef selects a ConfigMap or Secret to take configuration from.
+type VariableRef struct {
 	// Name of the object, in the Weave's own namespace.
 	//
 	// +kubebuilder:validation:MinLength=1
@@ -107,7 +107,7 @@ type InputRef struct {
 	Name string `json:"name"`
 
 	// Key selects a single entry, whose content is parsed as YAML and merged as
-	// a mapping. Without it every entry becomes one input, with its value as a
+	// a mapping. Without it every entry becomes one variable, with its value as a
 	// string.
 	//
 	// This is the difference between a ConfigMap of flat settings and one
@@ -117,7 +117,7 @@ type InputRef struct {
 	// +optional
 	Key string `json:"key,omitempty"`
 
-	// Optional skips this layer when the object does not exist. Without it a
+	// Optional skips this entry when the object does not exist. Without it a
 	// missing object leaves the Weave waiting, because a composition built on
 	// configuration that has not arrived is not ready.
 	//
@@ -139,10 +139,10 @@ type WeaveSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	ServiceAccountName string `json:"serviceAccountName"`
 
-	// Inputs is static configuration, assembled from layers and passed to the
-	// program as one mapping.
+	// Variables is static configuration, assembled from these entries and
+	// reaching the program as one mapping bound to variable.
 	//
-	// Layers are merged in order and later ones win, so a base can come from a
+	// Entries are merged in order and later ones win, so a base can come from a
 	// ConfigMap somebody else maintains and be overridden inline here. Mappings
 	// merge key by key; anything else is replaced outright, which is the same
 	// rule Helm values follow and the one people already expect.
@@ -150,9 +150,13 @@ type WeaveSpec struct {
 	// A program cannot tell where a value came from, which is the point: moving
 	// a setting from inline to a ConfigMap is not a change to the composition.
 	//
+	// Variables are keys; sources are resources. Nothing here is watched for
+	// the sake of an ordering edge - a ConfigMap named here is read for the
+	// values in it, and a change to it re-runs the program.
+	//
 	// +optional
 	// +listType=atomic
-	Inputs []InputSource `json:"inputs,omitempty"`
+	Variables []Variable `json:"variables,omitempty"`
 
 	// Sources are the existing resources this composition reads.
 	//
@@ -162,7 +166,7 @@ type WeaveSpec struct {
 	Sources []Source `json:"sources,omitempty"`
 
 	// Program is a Starlark program defining
-	// compose(inputs, sources, observed), returning a mapping of stable key to
+	// compose(variable, sources, observed), returning a mapping of stable key to
 	// resource. Keys are the inventory identity: renaming a key does not
 	// rename anything, it deletes one resource and creates another.
 	//

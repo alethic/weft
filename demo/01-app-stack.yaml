@@ -16,7 +16,7 @@ metadata:
 spec:
   serviceAccountName: composer
 
-  inputs:
+  variables:
     - values:
         name: shop
         image: registry.k8s.io/pause:3.9
@@ -52,7 +52,7 @@ spec:
       name: platform
 
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         out = {}
 
         # Nothing can be built without these, so require() rather than get():
@@ -70,7 +70,7 @@ spec:
             "apiVersion": "v1",
             "kind": "ServiceAccount",
             "metadata": {
-                "name": inputs.name,
+                "name": variable.name,
                 "annotations": {"weft.run/wave": "0"},
             },
         }
@@ -94,13 +94,13 @@ spec:
             "region": region,
             "cluster": cluster,
             "identity": {
-                "serviceAccountName": inputs.name,
+                "serviceAccountName": variable.name,
                 "uid": sa_uid,
             },
-            "features": [f.name for f in inputs.features if f.enabled],
+            "features": [f.name for f in variable.features if f.enabled],
             "environments": {
                 e.name: {"replicas": e.replicas, "debug": e.debug}
-                for e in inputs.environments
+                for e in variable.environments
             },
         }
 
@@ -108,12 +108,12 @@ spec:
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {
-                "name": inputs.name + "-values",
+                "name": variable.name + "-values",
                 "annotations": {"weft.run/wave": "1"},
             },
             "data": {
                 "values.yaml": to_yaml(settings),
-                "features.json": to_json([f.name for f in inputs.features if f.enabled]),
+                "features.json": to_json([f.name for f in variable.features if f.enabled]),
             },
         }
 
@@ -125,7 +125,7 @@ spec:
             "apiVersion": "v1",
             "kind": "Secret",
             "metadata": {
-                "name": inputs.name + "-derived",
+                "name": variable.name + "-derived",
                 "annotations": {"weft.run/wave": "1"},
             },
             "type": "Opaque",
@@ -138,12 +138,12 @@ spec:
         # The fan-out. One ConfigMap per environment, all in the same wave
         # because none of them depends on another, so teardown removes them in
         # a single step rather than one round trip at a time.
-        for env in inputs.environments:
+        for env in variable.environments:
             out["env-" + env.name] = {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {
-                    "name": inputs.name + "-" + env.name,
+                    "name": variable.name + "-" + env.name,
                     "annotations": {"weft.run/wave": "1"},
                     "labels": {"environment": env.name},
                 },
@@ -164,24 +164,24 @@ spec:
             "apiVersion": "apps/v1",
             "kind": "Deployment",
             "metadata": {
-                "name": inputs.name,
+                "name": variable.name,
                 "annotations": {"weft.run/wave": "2"},
             },
             "spec": {
-                "replicas": inputs.replicas,
-                "selector": {"matchLabels": {"app": inputs.name}},
+                "replicas": variable.replicas,
+                "selector": {"matchLabels": {"app": variable.name}},
                 "template": {
-                    "metadata": {"labels": {"app": inputs.name}},
+                    "metadata": {"labels": {"app": variable.name}},
                     "spec": {
-                        "serviceAccountName": inputs.name,
+                        "serviceAccountName": variable.name,
                         "containers": [{
                             "name": "app",
-                            "image": inputs.image,
+                            "image": variable.image,
                             "env": [{
                                 "name": "TENANT",
                                 "valueFrom": {
                                     "secretKeyRef": {
-                                        "name": inputs.name + "-derived",
+                                        "name": variable.name + "-derived",
                                         "key": "tenant",
                                     },
                                 },
@@ -194,7 +194,7 @@ spec:
                         }],
                         "volumes": [{
                             "name": "values",
-                            "configMap": {"name": inputs.name + "-values"},
+                            "configMap": {"name": variable.name + "-values"},
                         }],
                     },
                 },
@@ -205,11 +205,11 @@ spec:
             "apiVersion": "v1",
             "kind": "Service",
             "metadata": {
-                "name": inputs.name,
+                "name": variable.name,
                 "annotations": {"weft.run/wave": "2"},
             },
             "spec": {
-                "selector": {"app": inputs.name},
+                "selector": {"app": variable.name},
                 "ports": [{"port": 80, "targetPort": 80, "name": "http"}],
             },
         }

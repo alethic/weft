@@ -25,7 +25,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         out = {}
         # Return order is apply order, and therefore reverse teardown order.
         # No annotation needed: position is the default.

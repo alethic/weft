@@ -154,9 +154,9 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 		}
 	}()
 
-	inputsV, err := objectToStarlark(req.Inputs)
+	inputsV, err := objectToStarlark(req.Variables)
 	if err != nil {
-		return nil, programErrorf(ReasonInvalidArgument, "converting inputs: %v", err)
+		return nil, programErrorf(ReasonInvalidArgument, "converting variables: %v", err)
 	}
 	sourcesV, err := objectToStarlark(sourcesMap(req.Sources))
 	if err != nil {
@@ -176,7 +176,7 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 	composeFn, ok := globals["compose"]
 	if !ok {
 		return nil, programErrorf(ReasonNoComposeFunc,
-			"program does not define compose(inputs, sources, observed)")
+			"program does not define compose(variable, sources, observed)")
 	}
 	callable, isCallable := composeFn.(starlark.Callable)
 	if !isCallable {

@@ -32,7 +32,7 @@ spec:
       name: upstream
       finalize: true
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         return {
             "derived": {
                 "apiVersion": "v1",

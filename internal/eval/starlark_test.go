@@ -33,16 +33,16 @@ func programError(t *testing.T, err error) *ProgramError {
 
 func TestReturnsResource(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "cfg": {
             "apiVersion": "v1",
             "kind": "ConfigMap",
-            "metadata": {"name": inputs.name},
+            "metadata": {"name": variable.name},
             "data": {"hello": "world"},
         },
     }
-`, Request{Inputs: map[string]any{"name": "greeting"}})
+`, Request{Variables: map[string]any{"name": "greeting"}})
 
 	if len(res.Resources) != 1 {
 		t.Fatalf("got %d resources, want 1", len(res.Resources))
@@ -61,7 +61,7 @@ def compose(inputs, sources, observed):
 // it has to survive evaluation exactly as written.
 func TestReturnOrderIsPreserved(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     for n in ["zulu", "alpha", "mike", "bravo"]:
         out[n] = {
@@ -85,7 +85,7 @@ def compose(inputs, sources, observed):
 
 func TestWaitSentinel(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return wait("the tenant ConfigMap has not been created yet")
 `, Request{})
 
@@ -104,7 +104,7 @@ def compose(inputs, sources, observed):
 // to name the specific field so the condition is actionable.
 func TestRequireNamesTheUnresolvedField(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     rgid = require(sources.resourceGroup, "status.atProvider.id")
     return {}
 `, Request{
@@ -129,7 +129,7 @@ def compose(inputs, sources, observed):
 
 func TestRequireOnAbsentSource(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"x": require(sources.resourceGroup, "status.atProvider.id")}
 `, Request{Sources: map[string]any{"resourceGroup": nil}})
 
@@ -145,7 +145,7 @@ def compose(inputs, sources, observed):
 // the write-back, which is not resolved.
 func TestRequireTreatsEmptyStringAsUnresolved(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"x": require(sources.rg, "status.atProvider.id")}
 `, Request{
 		Sources: map[string]any{
@@ -167,7 +167,7 @@ def compose(inputs, sources, observed):
 
 func TestRequireNameOverride(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"x": require(observed.get("app-identity"), "status.atProvider.principalId", name = "the app identity")}
 `, Request{})
 
@@ -181,7 +181,7 @@ def compose(inputs, sources, observed):
 
 func TestGetWithDefault(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "cfg": {
             "apiVersion": "v1",
@@ -237,7 +237,7 @@ func TestBracketPathReachesAnnotation(t *testing.T) {
 	}
 
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     name = require(sources.storage, 'metadata.annotations["crossplane.io/external-name"]')
     return {
         "cfg": {
@@ -259,7 +259,7 @@ def compose(inputs, sources, observed):
 // hard error: the provider writes it back asynchronously.
 func TestMissingExternalNameWaits(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"x": require(sources.storage, 'metadata.annotations["crossplane.io/external-name"]')}
 `, Request{
 		Sources: map[string]any{
@@ -282,11 +282,11 @@ def compose(inputs, sources, observed):
 // compositions do, so it gets a first-class test.
 func TestNestedDocumentAsString(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     values = {
-        "image": {"repository": inputs.image, "tag": "latest"},
+        "image": {"repository": variable.image, "tag": "latest"},
         "env": [
-            {"name": "SB", "value": inputs.serviceBus},
+            {"name": "SB", "value": variable.serviceBus},
             {"name": "MODE", "value": "prod"},
         ],
     }
@@ -298,7 +298,7 @@ def compose(inputs, sources, observed):
             "data": {"values.yaml": to_yaml(values)},
         },
     }
-`, Request{Inputs: map[string]any{"image": "ghcr.io/x/y", "serviceBus": "sb://host"}})
+`, Request{Variables: map[string]any{"image": "ghcr.io/x/y", "serviceBus": "sb://host"}})
 
 	data := res.Resources[0].Object["data"].(map[string]any)
 	got := data["values.yaml"].(string)
@@ -317,7 +317,7 @@ def compose(inputs, sources, observed):
 
 func TestToYAMLUsesBlockScalarForMultilineStrings(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     script = "CREATE USER [x] FROM EXTERNAL PROVIDER;\nGO\n"
     return {
         "cfg": {
@@ -335,22 +335,22 @@ def compose(inputs, sources, observed):
 	}
 }
 
-// Fan-out over a list in inputs replaces build-time templating that produced N
+// Fan-out over a list in variables replaces build-time templating that produced N
 // copies of a whole CronJob.
-func TestFanOutOverInputs(t *testing.T) {
+func TestFanOutOverVariables(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
-    for role in inputs.roles:
+    for role in variable.roles:
         key = "ra-" + role.name
         out[key] = {
             "apiVersion": "authorization.azure.m.upbound.io/v1beta1",
             "kind": "RoleAssignment",
             "metadata": {"name": key},
-            "spec": {"forProvider": {"roleDefinitionName": role.role, "scope": inputs.scope}},
+            "spec": {"forProvider": {"roleDefinitionName": role.role, "scope": variable.scope}},
         }
     return out
-`, Request{Inputs: map[string]any{
+`, Request{Variables: map[string]any{
 		"scope": "/subscriptions/x",
 		"roles": []any{
 			map[string]any{"name": "blob", "role": "Storage Blob Data Owner"},
@@ -371,7 +371,7 @@ def compose(inputs, sources, observed):
 // the identity, and only emit what consumes it once its status has populated.
 func TestSelfReferenceStaging(t *testing.T) {
 	program := `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     out["identity"] = {
         "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
@@ -418,7 +418,7 @@ def compose(inputs, sources, observed):
 
 func TestFailIsAProgramError(t *testing.T) {
 	_, err := run(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     fail("the role table is empty")
 `, Request{})
 
@@ -438,7 +438,7 @@ func TestLoadIsRejected(t *testing.T) {
 	_, err := run(t, `
 load("helpers.star", "helper")
 
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {}
 `, Request{})
 
@@ -450,7 +450,7 @@ def compose(inputs, sources, observed):
 
 func TestStepBudget(t *testing.T) {
 	_, err := NewStarlark(Options{MaxSteps: 10_000}).Evaluate(context.Background(), Request{Program: `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     total = 0
     for i in range(1000000):
         total += i
@@ -465,7 +465,7 @@ def compose(inputs, sources, observed):
 
 func TestResourceCountLimit(t *testing.T) {
 	_, err := NewStarlark(Options{MaxResources: 3}).Evaluate(context.Background(), Request{Program: `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {}
     for i in range(10):
         out["cfg" + str(i)] = {
@@ -487,7 +487,7 @@ def countdown(n):
         return 0
     return countdown(n - 1)
 
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     countdown(5)
     return {}
 `, Request{})
@@ -548,7 +548,7 @@ func TestInvalidOutputs(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := run(t, "def compose(inputs, sources, observed):\n"+tc.body+"\n", Request{})
+			_, err := run(t, "def compose(variable, sources, observed):\n"+tc.body+"\n", Request{})
 			pe := programError(t, err)
 			if pe.Reason != tc.reason {
 				t.Errorf("reason = %q, want %q (%s)", pe.Reason, tc.reason, pe.Msg)
@@ -580,7 +580,7 @@ func TestSyntaxError(t *testing.T) {
 // with a blank field which applies cleanly, and is far worse than an error.
 func TestMissingFieldIsAnErrorNotNone(t *testing.T) {
 	_, err := run(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"x": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": sources.rg.staus}}}
 `, Request{Sources: map[string]any{
 		"rg": map[string]any{"apiVersion": "v1", "kind": "ResourceGroup", "metadata": map[string]any{"name": "rg"}},
@@ -599,16 +599,16 @@ def compose(inputs, sources, observed):
 // is a different resource body and churns the object on every apply.
 func TestIntegersSurviveRoundTrip(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "d": {
             "apiVersion": "apps/v1",
             "kind": "Deployment",
             "metadata": {"name": "d"},
-            "spec": {"replicas": inputs.replicas, "doubled": inputs.replicas * 2},
+            "spec": {"replicas": variable.replicas, "doubled": variable.replicas * 2},
         },
     }
-`, Request{Inputs: map[string]any{"replicas": int64(3)}})
+`, Request{Variables: map[string]any{"replicas": int64(3)}})
 
 	spec := res.Resources[0].Object["spec"].(map[string]any)
 	if got, ok := spec["replicas"].(int64); !ok || got != 3 {
@@ -621,7 +621,7 @@ def compose(inputs, sources, observed):
 
 func TestToJSONPreservesOrder(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     d = {}
     d["zebra"] = 1
     d["apple"] = [1, 2]
@@ -645,7 +645,7 @@ def compose(inputs, sources, observed):
 
 func TestRoundTripHelpers(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     parsed = from_yaml("a: 1\nb: [x, y]\n")
     return {
         "c": {
@@ -679,7 +679,7 @@ def compose(inputs, sources, observed):
 
 func TestHasBuiltin(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {
         "c": {
             "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
@@ -710,7 +710,7 @@ def compose(inputs, sources, observed):
 // come back as the same program, and different source must not.
 func TestProgramCache(t *testing.T) {
 	s := NewStarlark(Options{CacheSize: 2})
-	src := "def compose(inputs, sources, observed):\n    return {}\n"
+	src := "def compose(variable, sources, observed):\n    return {}\n"
 
 	p1, err := s.program(src)
 	if err != nil {
@@ -724,7 +724,7 @@ func TestProgramCache(t *testing.T) {
 		t.Error("identical source should reuse the compiled program")
 	}
 
-	other := "def compose(inputs, sources, observed):\n    return {}\n# different\n"
+	other := "def compose(variable, sources, observed):\n    return {}\n# different\n"
 	p3, err := s.program(other)
 	if err != nil {
 		t.Fatal(err)
@@ -747,7 +747,7 @@ func TestContextCancellation(t *testing.T) {
 	cancel()
 
 	_, err := NewStarlark(Options{}).Evaluate(ctx, Request{Program: `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     total = 0
     for i in range(100000000):
         total += i
@@ -763,7 +763,7 @@ def compose(inputs, sources, observed):
 // an undeclared source is a typo worth reporting.
 func TestUndeclaredSourceIsAnError(t *testing.T) {
 	_, err := run(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"x": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": sources.nope.metadata.name}}}
 `, Request{Sources: map[string]any{"rg": nil}})
 
@@ -775,7 +775,7 @@ def compose(inputs, sources, observed):
 
 func TestObservedIsIterable(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     names = sorted([k for k in observed])
     return {
         "c": {
@@ -800,7 +800,7 @@ def compose(inputs, sources, observed):
 // would never be created.
 func TestPendingReturnsResourcesAndAReason(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     out = {"identity": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "id"}}}
     principal = get(observed, ["identity", "status", "principalId"])
     if not principal:
@@ -825,7 +825,7 @@ def compose(inputs, sources, observed):
 // by accident and useless to read.
 func TestPendingDeduplicates(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     for i in range(5):
         pending("the resource group id")
     pending("the service bus id")
@@ -839,7 +839,7 @@ def compose(inputs, sources, observed):
 
 func TestPendingNeedsAReason(t *testing.T) {
 	_, err := run(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     pending("")
     return {}
 `, Request{})
@@ -851,7 +851,7 @@ def compose(inputs, sources, observed):
 // A finished composition reports nothing pending, so Ready means Ready.
 func TestNoPendingWhenResolved(t *testing.T) {
 	res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {"a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}}}
 `, Request{})
 	if len(res.Pending) != 0 {
@@ -867,7 +867,7 @@ def compose(inputs, sources, observed):
 func TestLanguageBounds(t *testing.T) {
 	t.Run("sets are available", func(t *testing.T) {
 		res := mustRun(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     unique = set(["a", "b", "a"])
     return {
         "c": {
@@ -883,7 +883,7 @@ def compose(inputs, sources, observed):
 
 	t.Run("while is rejected", func(t *testing.T) {
 		_, err := run(t, `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     while True:
         break
     return {}
@@ -899,7 +899,7 @@ def compose(inputs, sources, observed):
 if 1 == 1:
     x = 2
 
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {}
 `, Request{})
 		pe := programError(t, err)
@@ -913,7 +913,7 @@ def compose(inputs, sources, observed):
 X = 1
 X = 2
 
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     return {}
 `, Request{})
 		pe := programError(t, err)

@@ -5,7 +5,7 @@ import "testing"
 // The gate a `required: true` source provides, written in the program instead.
 func TestGatingInTheBody(t *testing.T) {
 	program := `
-def compose(inputs, sources, observed):
+def compose(variable, sources, observed):
     # Never reads a field off it. A pure ordering gate.
     if not sources.database:
         return wait("MSSQLDatabase has not been created yet")
@@ -29,22 +29,22 @@ def compose(inputs, sources, observed):
 // configuration.
 func TestConditionalGatingInTheBody(t *testing.T) {
 	program := `
-def compose(inputs, sources, observed):
-    if inputs.useSql and not sources.database:
+def compose(variable, sources, observed):
+    if variable.useSql and not sources.database:
         return wait("SQL is enabled but the database does not exist yet")
     return {"cfg": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"}}}
 `
 	res := mustRun(t, program, Request{
-		Inputs:  map[string]any{"useSql": true},
-		Sources: map[string]any{"database": nil},
+		Variables: map[string]any{"useSql": true},
+		Sources:   map[string]any{"database": nil},
 	})
 	if !res.Waiting() {
 		t.Fatal("should gate when SQL is enabled and the database is absent")
 	}
 
 	res = mustRun(t, program, Request{
-		Inputs:  map[string]any{"useSql": false},
-		Sources: map[string]any{"database": nil},
+		Variables: map[string]any{"useSql": false},
+		Sources:   map[string]any{"database": nil},
 	})
 	if res.Waiting() || len(res.Resources) != 1 {
 		t.Fatalf("should proceed when SQL is off, absent database and all: %#v", res)

@@ -13,11 +13,11 @@ import (
 
 // Request is one evaluation.
 type Request struct {
-	// Program is the Starlark source defining compose(inputs, sources, observed).
+	// Program is the Starlark source defining compose(variable, sources, observed).
 	Program string
 
-	// Inputs is static configuration from spec.inputs.
-	Inputs map[string]any
+	// Variables is static configuration from spec.variable.
+	Variables map[string]any
 
 	// Sources maps declared source id to the resolved object, or nil when the
 	// resource does not exist. A source that could not be *read* never reaches

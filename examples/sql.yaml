@@ -15,7 +15,7 @@ metadata:
 spec:
   serviceAccountName: sweep-env-compose
 
-  inputs:
+  variables:
     - values:
         prefix: sweep-env
         resourceName: sweep-env
@@ -42,18 +42,18 @@ spec:
     name: sweep-env-app
 
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         out = {}
 
         rg_id = require(sources.resourceGroup, "status.atProvider.id")
-        admin_name = inputs.resourceName + "-sqladmin"
+        admin_name = variable.resourceName + "-sqladmin"
 
         # Wave 0: the identity the SQL server runs its AAD admin as.
         out["sqladmin-identity"] = {
             "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
             "kind": "UserAssignedIdentity",
             "metadata": {
-                "name": inputs.prefix + "-sqladmin",
+                "name": variable.prefix + "-sqladmin",
                 "annotations": {
                     "weft.run/wave": "0",
                     "crossplane.io/external-name":
@@ -61,11 +61,11 @@ spec:
                 },
             },
             "spec": {
-                "providerConfigRef": inputs.providerConfigRef,
+                "providerConfigRef": variable.providerConfigRef,
                 "forProvider": {
                     "name": admin_name,
-                    "location": inputs.location,
-                    "resourceGroupName": inputs.resourceGroupName,
+                    "location": variable.location,
+                    "resourceGroupName": variable.resourceGroupName,
                 },
             },
         }
@@ -81,7 +81,7 @@ spec:
             "apiVersion": "v1",
             "kind": "ServiceAccount",
             "metadata": {
-                "name": inputs.prefix + "-sqladmin",
+                "name": variable.prefix + "-sqladmin",
                 "annotations": {
                     "weft.run/wave": "1",
                     "azure.workload.identity/client-id": admin_client_id,
@@ -93,14 +93,14 @@ spec:
             "apiVersion": "sql.azure.m.upbound.io/v1beta1",
             "kind": "MSSQLServer",
             "metadata": {
-                "name": inputs.prefix,
+                "name": variable.prefix,
                 "annotations": {"weft.run/wave": "1"},
             },
             "spec": {
-                "providerConfigRef": inputs.providerConfigRef,
+                "providerConfigRef": variable.providerConfigRef,
                 "forProvider": {
-                    "location": inputs.location,
-                    "resourceGroupName": inputs.resourceGroupName,
+                    "location": variable.location,
+                    "resourceGroupName": variable.resourceGroupName,
                     "version": "12.0",
                     "azureadAdministrator": [{
                         "loginUsername": admin_name,
@@ -117,7 +117,7 @@ spec:
             pending("fullyQualifiedDomainName on the SQL server")
             return out
 
-        for user in inputs.databaseUsers:
+        for user in variable.databaseUsers:
             # The identity's own generation is what makes this Job re-run when
             # the identity changes and stay put when it does not. The original
             # had no way to express that, so it re-ran every five minutes
@@ -135,28 +135,28 @@ spec:
                 "apiVersion": "batch/v1",
                 "kind": "Job",
                 "metadata": {
-                    "name": inputs.prefix + "-sqlcmd-" + user.name + "-" + str(generation),
+                    "name": variable.prefix + "-sqlcmd-" + user.name + "-" + str(generation),
                     "annotations": {"weft.run/wave": "2"},
                 },
                 "spec": {
                     "backoffLimit": 4,
                     "template": {
                         "spec": {
-                            "serviceAccountName": inputs.prefix + "-sqladmin",
+                            "serviceAccountName": variable.prefix + "-sqladmin",
                             "restartPolicy": "Never",
                             "containers": [{
                                 "name": "sqlcmd",
-                                "image": inputs.sqlcmdImage,
+                                "image": variable.sqlcmdImage,
                                 "command": ["/bin/sh", "-c"],
                                 "args": [
-                                    "sqlcmd -S " + fqdn + " -d " + inputs.prefix +
+                                    "sqlcmd -S " + fqdn + " -d " + variable.prefix +
                                     " --authentication-method ActiveDirectoryWorkloadIdentity -i /script/grant.sql",
                                 ],
                                 "volumeMounts": [{"name": "script", "mountPath": "/script"}],
                             }],
                             "volumes": [{
                                 "name": "script",
-                                "configMap": {"name": inputs.prefix + "-sqlcmd-" + user.name},
+                                "configMap": {"name": variable.prefix + "-sqlcmd-" + user.name},
                             }],
                         },
                     },
@@ -169,7 +169,7 @@ spec:
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {
-                    "name": inputs.prefix + "-sqlcmd-" + user.name,
+                    "name": variable.prefix + "-sqlcmd-" + user.name,
                     "annotations": {"weft.run/wave": "1"},
                 },
                 "data": {"grant.sql": script},

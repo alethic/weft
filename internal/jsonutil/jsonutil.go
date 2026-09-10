@@ -6,7 +6,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/json"
 )
 
-// DecodeObject turns spec.inputs into plain data for a program.
+// DecodeObject turns spec.variables into plain data for a program.
 //
 // This is apimachinery's decoder rather than encoding/json because that one
 // turns every JSON number into a float64. A replica count that reaches a
@@ -16,7 +16,7 @@ import (
 // A malformed value yields an empty map rather than an error: the CRD schema
 // already guarantees this is an object, so a failure here would mean the API
 // server accepted something it should not have, and a composition that sees no
-// inputs reports that far more legibly than a decode error would.
+// variables reports that far more legibly than a decode error would.
 func DecodeObject(raw *apiextensionsv1.JSON) map[string]any {
 	if raw == nil || len(raw.Raw) == 0 {
 		return map[string]any{}

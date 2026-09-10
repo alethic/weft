@@ -25,7 +25,7 @@ spec:
             return 0
         return countdown(n - 1)
 
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         countdown(10)
         return {}
 ---
@@ -41,7 +41,7 @@ spec:
   program: |
     load("helpers.star", "helper")
 
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         return {}
 ---
 # Runtime bounding is what replaces the apply-time type checking a
@@ -54,7 +54,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         total = 0
         for i in range(100000000):
             total += i
@@ -70,7 +70,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         return {
             "escapee": {
                 "apiVersion": "v1",
@@ -89,7 +89,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         return {
             "ns": {
                 "apiVersion": "v1",
@@ -108,7 +108,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         return {
             "adopted": {
                 "apiVersion": "v1",
@@ -136,7 +136,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         return {
             "annotated": {
                 "apiVersion": "v1",
@@ -166,7 +166,7 @@ spec:
       kind: ConfigMap
       name: platform
   program: |
-    def compose(inputs, sources, observed):
+    def compose(variable, sources, observed):
         return {
             "cfg": {
                 "apiVersion": "v1",
