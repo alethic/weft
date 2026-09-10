@@ -60,6 +60,17 @@ type Result struct {
 
 	// Wait is non-nil when the program signalled that it cannot proceed yet.
 	Wait *Wait
+
+	// Pending lists things the program noted as unresolved while still
+	// returning resources.
+	//
+	// Staging needs this. A composition that creates an identity and then role
+	// assignments that consume it emits the identity on the first pass and
+	// nothing else, and reporting that as fully converged would be a lie:
+	// half the composition does not exist. Wait cannot express it either,
+	// because a wait produces no resources at all and the identity would never
+	// be created.
+	Pending []string
 }
 
 // Waiting reports whether this result is a wait rather than a resource set.

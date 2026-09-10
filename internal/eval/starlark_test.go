@@ -801,3 +801,68 @@ def compose(inputs, sources, observed):
 		t.Errorf("observed iteration: %v", data)
 	}
 }
+
+// Staging needs a third thing that neither a plain mapping nor wait() can say:
+// "these resources are correct, and I am still not finished". Returning wait()
+// would produce no resources at all, so the identity everything else depends on
+// would never be created.
+func TestPendingReturnsResourcesAndAReason(t *testing.T) {
+	res := mustRun(t, `
+def compose(inputs, sources, observed):
+    out = {"identity": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "id"}}}
+    principal = get(observed, ["identity", "status", "principalId"])
+    if not principal:
+        pending("principalId on the app identity")
+        return out
+    out["assignment"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "ra"}}
+    return out
+`, Request{})
+
+	if res.Waiting() {
+		t.Fatal("pending() must not discard the resources the way wait() does")
+	}
+	if len(res.Resources) != 1 || res.Resources[0].Key != "identity" {
+		t.Fatalf("resources = %v", res.Resources)
+	}
+	if len(res.Pending) != 1 || res.Pending[0] != "principalId on the app identity" {
+		t.Errorf("pending = %v", res.Pending)
+	}
+}
+
+// Reporting the same unresolved thing once per loop iteration is easy to write
+// by accident and useless to read.
+func TestPendingDeduplicates(t *testing.T) {
+	res := mustRun(t, `
+def compose(inputs, sources, observed):
+    for i in range(5):
+        pending("the resource group id")
+    pending("the service bus id")
+    return {}
+`, Request{})
+
+	if len(res.Pending) != 2 {
+		t.Errorf("pending = %v, want two distinct reasons", res.Pending)
+	}
+}
+
+func TestPendingNeedsAReason(t *testing.T) {
+	_, err := run(t, `
+def compose(inputs, sources, observed):
+    pending("")
+    return {}
+`, Request{})
+	if err == nil {
+		t.Fatal("an empty reason should be rejected: it becomes a condition message")
+	}
+}
+
+// A finished composition reports nothing pending, so Ready means Ready.
+func TestNoPendingWhenResolved(t *testing.T) {
+	res := mustRun(t, `
+def compose(inputs, sources, observed):
+    return {"a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}}}
+`, Request{})
+	if len(res.Pending) != 0 {
+		t.Errorf("pending = %v, want none", res.Pending)
+	}
+}

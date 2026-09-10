@@ -31,6 +31,7 @@ import (
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/inventory"
+	"github.com/alethic/weft/internal/jsonutil"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/naming"
 	"github.com/alethic/weft/internal/watches"
@@ -257,6 +258,19 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 		requeue = pass.wakeIn
 	}
 
+	// Resources were applied, but the program said it is not finished. Ready
+	// would be a lie here: the point of staging is that half the composition
+	// does not exist yet.
+	if len(pass.pending) > 0 {
+		markWaiting(weave, ReasonFieldUnresolved,
+			pass.summary+"; still waiting for "+joinWithAnd(pass.pending))
+		if report.Degraded() {
+			setCondition(weave, naming.ConditionDegraded, metav1.ConditionTrue, ReasonWatchDegraded,
+				watchFailureMessage(report))
+		}
+		return ctrl.Result{RequeueAfter: requeue}, nil
+	}
+
 	if report.Degraded() {
 		setCondition(weave, naming.ConditionReady, metav1.ConditionTrue, ReasonApplied, pass.summary)
 		setCondition(weave, naming.ConditionWaiting, metav1.ConditionFalse, ReasonApplied, "nothing outstanding")
@@ -275,6 +289,10 @@ type pass struct {
 	summary string
 	// wakeIn asks for a requeue sooner than the caller would otherwise pick.
 	wakeIn time.Duration
+	// pending lists things the program reported unresolved while still
+	// producing resources. Everything returned has been applied, but the
+	// composition has not finished converging.
+	pending []string
 }
 
 // compose runs one full pass.
@@ -306,7 +324,7 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 
 	res, err := r.Evaluator.Evaluate(ctx, eval.Request{
 		Program:  weave.Spec.Program,
-		Inputs:   decodeInputs(weave),
+		Inputs:   jsonutil.DecodeObject(weave.Spec.Inputs),
 		Sources:  resolved.values,
 		Observed: observed,
 	})
@@ -344,7 +362,7 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 		return pass{}, applyErr
 	}
 
-	out := pass{summary: summarize(len(applied), len(diff.Retained))}
+	out := pass{summary: summarize(len(applied), len(diff.Retained)), pending: res.Pending}
 	if len(diff.Retained) > 0 {
 		out.wakeIn = requeueFor(diff.Retained, r.Opts.PruneDelay)
 	}
@@ -470,20 +488,6 @@ func (r *WeaveReconciler) eventf(weave *v1alpha1.Weave, eventType, reason, forma
 		return
 	}
 	r.Recorder.Eventf(weave, eventType, reason, format, args...)
-}
-
-// decodeInputs turns spec.inputs into plain data for the program.
-func decodeInputs(weave *v1alpha1.Weave) map[string]any {
-	if weave.Spec.Inputs == nil || len(weave.Spec.Inputs.Raw) == 0 {
-		return map[string]any{}
-	}
-	var out map[string]any
-	if err := jsonUnmarshal(weave.Spec.Inputs.Raw, &out); err != nil {
-		// The CRD schema already guarantees this is an object; a failure here
-		// would mean the API server accepted something it should not have.
-		return map[string]any{}
-	}
-	return out
 }
 
 // programMessage renders a program failure with its backtrace, which is the

@@ -1,0 +1,44 @@
+# Binds the controller to its own privileges. Read config/rbac/role.yaml
+# alongside this: the notable thing about it is how little it grants. There is
+# no write access to any resource type a composition might generate, because the
+# controller never writes as itself.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: weft-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: weft-controller
+subjects:
+- kind: ServiceAccount
+  name: weft-controller
+  namespace: weft-system
+---
+# Leader election, so that two replicas do not reconcile the same Weave.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: weft-leader-election
+  namespace: weft-system
+rules:
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: weft-leader-election
+  namespace: weft-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: weft-leader-election
+subjects:
+- kind: ServiceAccount
+  name: weft-controller
+  namespace: weft-system

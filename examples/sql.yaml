@@ -1,0 +1,179 @@
+# Merges four of the originals: sqladmin-identity, sqlserver,
+# sqladmin-serviceaccount, and sqlcmd.
+#
+# sqlcmd is the interesting one. It was a CronJob that generated a CronJob - a
+# second-order reconciler that existed purely because there was no way to say
+# "run when the identity changes", so the inner job re-ran every five minutes
+# forever and re-applied the same grants. With a real watch it collapses into a
+# single Job keyed off the identity's generation: it runs when the identity
+# actually changes, and not otherwise.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: sql
+  namespace: sweep-labs
+spec:
+  serviceAccountName: sweep-env-compose
+
+  inputs:
+    prefix: sweep-env
+    resourceName: sweep-env
+    location: eastus
+    resourceGroupName: sweep-env
+    providerConfigRef:
+      name: azure-default
+    sqlcmdImage: mcr.microsoft.com/mssql-tools18:latest
+    # The app identity that needs a database user. Ranged over at build time in
+    # the original chart; here it is a list the program loops over.
+    databaseUsers:
+    - name: app
+      identity: sweep-env-app
+
+  sources:
+  - id: resourceGroup
+    apiVersion: azure.m.upbound.io/v1beta1
+    kind: ResourceGroup
+    name: sweep-env
+    required: true
+
+  - id: appIdentity
+    apiVersion: managedidentity.azure.m.upbound.io/v1beta1
+    kind: UserAssignedIdentity
+    name: sweep-env-app
+    required: true
+
+  program: |
+    def compose(inputs, sources, observed):
+        out = {}
+
+        rg_id = require(sources.resourceGroup, "status.atProvider.id")
+        admin_name = inputs.resourceName + "-sqladmin"
+
+        # Wave 0: the identity the SQL server runs its AAD admin as.
+        out["sqladmin-identity"] = {
+            "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
+            "kind": "UserAssignedIdentity",
+            "metadata": {
+                "name": inputs.prefix + "-sqladmin",
+                "annotations": {
+                    "weft.run/wave": "0",
+                    "crossplane.io/external-name":
+                        rg_id + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/" + admin_name,
+                },
+            },
+            "spec": {
+                "providerConfigRef": inputs.providerConfigRef,
+                "forProvider": {
+                    "name": admin_name,
+                    "location": inputs.location,
+                    "resourceGroupName": inputs.resourceGroupName,
+                },
+            },
+        }
+
+        admin_client_id = get(observed, ["sqladmin-identity", "status", "atProvider", "clientId"])
+        admin_principal = get(observed, ["sqladmin-identity", "status", "atProvider", "principalId"])
+        if not admin_client_id or not admin_principal:
+            pending("clientId and principalId on the SQL admin identity")
+            return out
+
+        # Wave 1: the workload-identity ServiceAccount, and the server itself.
+        out["sqladmin-serviceaccount"] = {
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {
+                "name": inputs.prefix + "-sqladmin",
+                "annotations": {
+                    "weft.run/wave": "1",
+                    "azure.workload.identity/client-id": admin_client_id,
+                },
+            },
+        }
+
+        out["sqlserver"] = {
+            "apiVersion": "sql.azure.m.upbound.io/v1beta1",
+            "kind": "MSSQLServer",
+            "metadata": {
+                "name": inputs.prefix,
+                "annotations": {"weft.run/wave": "1"},
+            },
+            "spec": {
+                "providerConfigRef": inputs.providerConfigRef,
+                "forProvider": {
+                    "location": inputs.location,
+                    "resourceGroupName": inputs.resourceGroupName,
+                    "version": "12.0",
+                    "azureadAdministrator": [{
+                        "loginUsername": admin_name,
+                        "objectId": admin_principal,
+                        "azureadAuthenticationOnly": True,
+                    }],
+                },
+            },
+        }
+
+        # Wave 2: grant each application identity a database user.
+        fqdn = get(observed, ["sqlserver", "status", "atProvider", "fullyQualifiedDomainName"])
+        if not fqdn:
+            pending("fullyQualifiedDomainName on the SQL server")
+            return out
+
+        for user in inputs.databaseUsers:
+            # The identity's own generation is what makes this Job re-run when
+            # the identity changes and stay put when it does not. The original
+            # had no way to express that, so it re-ran every five minutes
+            # forever instead.
+            generation = get(sources.appIdentity, "metadata.generation", 0)
+
+            script = "\n".join([
+                "CREATE USER [" + user.identity + "] FROM EXTERNAL PROVIDER;",
+                "ALTER ROLE db_datareader ADD MEMBER [" + user.identity + "];",
+                "ALTER ROLE db_datawriter ADD MEMBER [" + user.identity + "];",
+                "GO",
+            ]) + "\n"
+
+            out["sqlcmd-" + user.name] = {
+                "apiVersion": "batch/v1",
+                "kind": "Job",
+                "metadata": {
+                    "name": inputs.prefix + "-sqlcmd-" + user.name + "-" + str(generation),
+                    "annotations": {"weft.run/wave": "2"},
+                },
+                "spec": {
+                    "backoffLimit": 4,
+                    "template": {
+                        "spec": {
+                            "serviceAccountName": inputs.prefix + "-sqladmin",
+                            "restartPolicy": "Never",
+                            "containers": [{
+                                "name": "sqlcmd",
+                                "image": inputs.sqlcmdImage,
+                                "command": ["/bin/sh", "-c"],
+                                "args": [
+                                    "sqlcmd -S " + fqdn + " -d " + inputs.prefix +
+                                    " --authentication-method ActiveDirectoryWorkloadIdentity -i /script/grant.sql",
+                                ],
+                                "volumeMounts": [{"name": "script", "mountPath": "/script"}],
+                            }],
+                            "volumes": [{
+                                "name": "script",
+                                "configMap": {"name": inputs.prefix + "-sqlcmd-" + user.name},
+                            }],
+                        },
+                    },
+                },
+            }
+
+            # The script lives in its own ConfigMap in an earlier wave, so it
+            # exists before the Job that mounts it and outlives it on teardown.
+            out["sqlcmd-script-" + user.name] = {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": inputs.prefix + "-sqlcmd-" + user.name,
+                    "annotations": {"weft.run/wave": "1"},
+                },
+                "data": {"grant.sql": script},
+            }
+
+        return out

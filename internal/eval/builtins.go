@@ -15,6 +15,9 @@ import (
 // Threads are per-evaluation, so this is not shared state.
 const waitLocalKey = "weft.wait"
 
+// pendingLocalKey accumulates the reasons pending() was called with.
+const pendingLocalKey = "weft.pending"
+
 // waitValue is the sentinel wait() returns. Returning it from compose() means
 // the program declined to produce a result, with a reason.
 type waitValue struct{ reason string }
@@ -46,6 +49,7 @@ func builtins() starlark.StringDict {
 		"has":       starlark.NewBuiltin("has", bHas),
 		"require":   starlark.NewBuiltin("require", bRequire),
 		"wait":      starlark.NewBuiltin("wait", bWait),
+		"pending":   starlark.NewBuiltin("pending", bPending),
 		"to_yaml":   starlark.NewBuiltin("to_yaml", bToYAML),
 		"from_yaml": starlark.NewBuiltin("from_yaml", bFromYAML),
 		"to_json":   starlark.NewBuiltin("to_json", bToJSON),
@@ -204,6 +208,33 @@ func bWait(t *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs 
 		return nil, fmt.Errorf("wait() needs a reason: it becomes the message on the Waiting condition")
 	}
 	return &waitValue{reason: reason}, nil
+}
+
+// bPending notes something unresolved without stopping the evaluation.
+//
+// This is the difference between "cannot proceed" and "proceeded as far as
+// possible". A composition that stages - create an identity, wait for its
+// provider status, then create what consumes it - has to return the identity
+// while still reporting that it is not finished, and neither returning a plain
+// mapping nor returning wait() says that.
+func bPending(t *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
+	var reason string
+	if err := starlark.UnpackArgs(b.Name(), args, kwargs, "reason", &reason); err != nil {
+		return nil, err
+	}
+	if reason == "" {
+		return nil, fmt.Errorf("pending() needs a reason: it becomes the message on the Waiting condition")
+	}
+	existing, _ := t.Local(pendingLocalKey).([]string)
+	for _, r := range existing {
+		if r == reason {
+			// Reporting the same unresolved thing once per loop iteration is
+			// easy to write by accident and useless to read.
+			return starlark.None, nil
+		}
+	}
+	t.SetLocal(pendingLocalKey, append(existing, reason))
+	return starlark.None, nil
 }
 
 // bToYAML serialises a value to a YAML document.

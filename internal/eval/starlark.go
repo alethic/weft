@@ -177,7 +177,14 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 		return s.classify(ctx, thread, err)
 	}
 
-	return s.decode(ret)
+	res, err := s.decode(ret)
+	if err != nil {
+		return nil, err
+	}
+	if reasons, ok := thread.Local(pendingLocalKey).([]string); ok {
+		res.Pending = reasons
+	}
+	return res, nil
 }
 
 // sourcesMap turns the resolved sources into a plain map, mapping an absent

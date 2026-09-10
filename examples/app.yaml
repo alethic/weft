@@ -1,0 +1,177 @@
+# Merges two of the original CronJob compositions: app-identity, which created
+# the application and KEDA identities, and app-roleassignments, which granted
+# them roles.
+#
+# They were separate because there was no way to say "run when the identity
+# changes". They were chained by both polling on a five-minute schedule, so a
+# fresh environment took ten minutes to reach the point where a role assignment
+# could even be attempted. Here they are one object: the role assignments are
+# simply not returned until the identity's principalId has been written back,
+# and the watch on the identity wakes this Weave the moment it is.
+#
+# Note what is not here. The FederatedIdentityCredentials that sat alongside the
+# original template are static - they read no live status - so they stay in
+# Helm. Weft is for the parts that have to react.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: app
+  namespace: sweep-labs
+spec:
+  serviceAccountName: sweep-env-compose
+
+  inputs:
+    prefix: sweep-env
+    resourceName: sweep-env
+    subscriptionId: "00000000-0000-0000-0000-000000000000"
+    location: eastus
+    resourceGroupName: sweep-env
+    providerConfigRef:
+      name: azure-default
+
+    # The role table. In the Helm chart this was a range at build time that
+    # produced N copies of an entire CronJob; here it is data, and the program
+    # loops over it. Adding a role is a one-line edit to this list.
+    #
+    # scope names one of the declared sources; principal names one of the
+    # identities created below.
+    roles:
+    - name: storage-blob-data-contributor
+      roleDefinitionId: ba92f5b4-2d11-453d-a403-e96b0029c9fe
+      scope: resourceGroup
+      principal: app
+    - name: key-vault-administrator
+      roleDefinitionId: 00482a5a-887f-4fb3-b363-3b7fe8e74483
+      scope: resourceGroup
+      principal: app
+    - name: service-bus-data-owner
+      roleDefinitionId: 090c5cfd-751d-490a-894a-3ce6f1109419
+      scope: serviceBus
+      principal: app
+    - name: cosmos-db-operator
+      roleDefinitionId: 230815da-be43-4aae-9cb4-875f7bd000aa
+      scope: cosmos
+      principal: app
+    # KEDA runs cluster-wide, so its identity is kept separate and only ever
+    # gets Service Bus Data Receiver - never the app identity's Data Owner.
+    - name: keda-service-bus-data-receiver
+      roleDefinitionId: 4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0
+      scope: serviceBus
+      principal: keda
+
+  sources:
+  # The resource group's provider id is the scope for most assignments and the
+  # prefix of every external-name below, so nothing can be built without it.
+  - id: resourceGroup
+    apiVersion: azure.m.upbound.io/v1beta1
+    kind: ResourceGroup
+    name: sweep-env
+    required: true
+
+  - id: serviceBus
+    apiVersion: servicebus.azure.m.upbound.io/v1beta1
+    kind: ServiceBusNamespace
+    name: sweep-env
+    required: true
+
+  - id: cosmos
+    apiVersion: cosmosdb.azure.m.upbound.io/v1beta1
+    kind: Account
+    name: sweep-env
+    required: true
+
+  program: |
+    # Identities the application and KEDA assume. Both are wave 0: everything
+    # else here depends on one of them.
+    IDENTITIES = ["app", "keda"]
+
+    def identity(inputs, rg_id, suffix):
+        name = inputs.resourceName + "-" + suffix
+        return {
+            "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
+            "kind": "UserAssignedIdentity",
+            "metadata": {
+                "name": inputs.prefix + "-" + suffix,
+                "annotations": {
+                    "weft.run/wave": "0",
+                    # The provider needs the fully qualified id to adopt rather
+                    # than recreate, and it can only be built once the resource
+                    # group has reported its own id.
+                    "crossplane.io/external-name":
+                        rg_id + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/" + name,
+                },
+            },
+            "spec": {
+                "providerConfigRef": inputs.providerConfigRef,
+                "forProvider": {
+                    "name": name,
+                    "location": inputs.location,
+                    "resourceGroupName": inputs.resourceGroupName,
+                },
+            },
+        }
+
+    def compose(inputs, sources, observed):
+        out = {}
+
+        rg_id = require(sources.resourceGroup, "status.atProvider.id")
+
+        for suffix in IDENTITIES:
+            out["identity-" + suffix] = identity(inputs, rg_id, suffix)
+
+        # Phase two. principalId is written back by the provider minutes after
+        # the apply returns, so an identity we just created is exactly as
+        # unready as an external source that has not appeared. One rule covers
+        # both, and the rule is: if it is not resolved, do not return what
+        # depends on it.
+        principals = {}
+        for suffix in IDENTITIES:
+            pid = get(observed, ["identity-" + suffix, "status", "atProvider", "principalId"])
+            if pid:
+                principals[suffix] = pid
+
+        scopes = {
+            "resourceGroup": rg_id,
+            "serviceBus": get(sources.serviceBus, "status.atProvider.id"),
+            "cosmos": get(sources.cosmos, "status.atProvider.id"),
+        }
+
+        for role in inputs.roles:
+            principal = principals.get(role.principal)
+            scope = scopes.get(role.scope)
+            if not principal:
+                # Not an error - just not yet. The watch on the identity brings
+                # us straight back here when its status is written back.
+                pending("principalId on the " + role.principal + " identity")
+                continue
+            if not scope:
+                pending("status.atProvider.id on the " + role.scope + " source")
+                continue
+
+            out["ra-" + role.name] = {
+                "apiVersion": "authorization.azure.m.upbound.io/v1beta1",
+                "kind": "RoleAssignment",
+                "metadata": {
+                    "name": inputs.prefix + "-" + role.name,
+                    # One wave for the whole fan-out. These have no dependency
+                    # on each other, so teardown removes them in a single step
+                    # instead of one round trip at a time.
+                    "annotations": {"weft.run/wave": "1"},
+                },
+                "spec": {
+                    "providerConfigRef": inputs.providerConfigRef,
+                    "forProvider": {
+                        "roleDefinitionId": "/subscriptions/" + inputs.subscriptionId +
+                            "/providers/Microsoft.Authorization/roleDefinitions/" + role.roleDefinitionId,
+                        "scope": scope,
+                        "principalId": principal,
+                    },
+                },
+            }
+
+        # Note that this never returns wait(). A wait produces no resources at
+        # all, so the identities everything else depends on would never be
+        # created and the composition could not advance. pending() is the one
+        # that says "these are correct, and I am not finished": the identities
+        # are applied, and the Weave reports what it is still waiting for.
+        return out
