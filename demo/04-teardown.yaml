@@ -1,0 +1,39 @@
+# Ordered teardown.
+#
+# Cascading garbage collection would remove all of this too, but in no
+# particular order, and self-reference makes the order real. Waves are recorded
+# on apply and deletion runs in reverse, one wave at a time, waiting for each to
+# be gone before starting the next.
+#
+# To watch it, pin the middle wave so teardown cannot pass it:
+#
+#   kubectl -n weft-demo patch cm layer-middle --type=merge \
+#     -p '{"metadata":{"finalizers":["example.test/hold"]}}'
+#   kubectl -n weft-demo delete weave teardown --wait=false
+#   kubectl -n weft-demo get cm -l weft.run/weave=teardown
+#
+# top is gone, middle is Terminating, and base is untouched - no deletion
+# timestamp at all. Release the hold and the rest drains:
+#
+#   kubectl -n weft-demo patch cm layer-middle --type=merge \
+#     -p '{"metadata":{"finalizers":null}}'
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: teardown
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    def compose(inputs, sources, observed):
+        out = {}
+        # Return order is apply order, and therefore reverse teardown order.
+        # No annotation needed: position is the default.
+        for name in ["base", "middle", "top"]:
+            out[name] = {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "layer-" + name},
+                "data": {"layer": name},
+            }
+        return out

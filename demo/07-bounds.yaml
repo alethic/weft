@@ -1,0 +1,178 @@
+# Every guardrail, each failing in its own distinguishable way.
+#
+# Untrusted authorship is the premise, so the language is bounded rather than
+# trusted. Each of these lands as Degraded with a reason of its own, never as a
+# wedged controller:
+#
+#   kubectl -n weft-demo get weave -o custom-columns=\
+#NAME:.metadata.name,READY:.status.conditions[?\(@.type==\"Ready\"\)].status,REASON:.status.conditions[?\(@.type==\"Degraded\"\)].reason
+#
+# These are meant to be looked at and then deleted. `budget` in particular
+# re-evaluates on every degraded retry, which is bounded but not free.
+---
+# Recursion turns a step budget into a stack-depth problem, which a step budget
+# does not catch. Rejected by the compiler.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-recursion
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    def countdown(n):
+        if n <= 0:
+            return 0
+        return countdown(n - 1)
+
+    def compose(inputs, sources, observed):
+        countdown(10)
+        return {}
+---
+# A program is self-contained. There is nowhere for load() to load from, and
+# saying so at compile time beats a confusing failure during evaluation.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-load
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    load("helpers.star", "helper")
+
+    def compose(inputs, sources, observed):
+        return {}
+---
+# Runtime bounding is what replaces the apply-time type checking a
+# schema-generating design would have had.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-budget
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    def compose(inputs, sources, observed):
+        total = 0
+        for i in range(100000000):
+            total += i
+        return {}
+---
+# Same-namespace is the hard rule that makes plain owner references sufficient,
+# so an output reaching outside is refused rather than relocated.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-namespace
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    def compose(inputs, sources, observed):
+        return {
+            "escapee": {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "escapee", "namespace": "kube-system"},
+            },
+        }
+---
+# A namespaced owner cannot own a cluster-scoped object, so it could never be
+# garbage collected. Refused before anything is created.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-cluster-scoped
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    def compose(inputs, sources, observed):
+        return {
+            "ns": {
+                "apiVersion": "v1",
+                "kind": "Namespace",
+                "metadata": {"name": "weft-should-not-create-this"},
+            },
+        }
+---
+# Weft owns what it creates and writes the reference itself. Letting a program
+# set one would let it hand its output to an owner that outlives the Weave.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-owner
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    def compose(inputs, sources, observed):
+        return {
+            "adopted": {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": "adopted",
+                    "ownerReferences": [{
+                        "apiVersion": "v1",
+                        "kind": "ConfigMap",
+                        "name": "somebody-else",
+                        "uid": "00000000-0000-0000-0000-000000000000",
+                    }],
+                },
+            },
+        }
+---
+# Mixing explicit waves with positional ones produces an ordering nobody wrote:
+# the annotated resource would tear down after an unannotated one that happens
+# to sit later in the mapping.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-mixed-waves
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    def compose(inputs, sources, observed):
+        return {
+            "annotated": {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "a", "annotations": {"weft.run/wave": "0"}},
+            },
+            "positional": {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "b"},
+            },
+        }
+---
+# A typo must not quietly become None. That would render a resource with a blank
+# field which applies cleanly, and is a far worse failure than a backtrace - the
+# error names the field and lists the ones that do exist.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-typo
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  sources:
+    - id: platform
+      apiVersion: v1
+      kind: ConfigMap
+      name: platform
+      required: true
+  program: |
+    def compose(inputs, sources, observed):
+        return {
+            "cfg": {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "cfg"},
+                "data": {"tenant": sources.platform.dta.tenantId},
+            },
+        }

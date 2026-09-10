@@ -1,0 +1,44 @@
+# A finalizer on somebody else's object.
+#
+# `finalize: true` asks Weft to hold the source open until what was derived from
+# it has been torn down. Deleting the source blocks, the outputs go first, then
+# the finalizer is released and the source disappears:
+#
+#   kubectl -n weft-demo get cm upstream -o jsonpath='{.metadata.finalizers}'
+#   kubectl -n weft-demo delete cm upstream
+#
+# Three rules make this safe to hand to a namespace user. The permission to
+# *remove* the finalizer is re-checked on every pass, not only when adding it,
+# because a RoleBinding revoked afterwards would otherwise leave a finalizer
+# nobody can lift - deadlocking the object and the namespace it lives in. It is
+# released after sourceFinalizerTimeout regardless of progress, because blocking
+# a stranger's object forever is worse than the ordering violation. And
+# `weft reap` releases every one Weft has placed, which is what you run before
+# uninstalling the controller.
+#
+# It orders the deletion of an API object and nothing more. It does not order
+# the destruction of whatever that object represents.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: finalizer
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  sources:
+    - id: upstream
+      apiVersion: v1
+      kind: ConfigMap
+      name: upstream
+      required: true
+      finalize: true
+  program: |
+    def compose(inputs, sources, observed):
+        return {
+            "derived": {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "derived-from-upstream"},
+                "data": {"upstreamId": require(sources.upstream, "data.id")},
+            },
+        }

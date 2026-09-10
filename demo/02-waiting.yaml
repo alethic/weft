@@ -1,0 +1,55 @@
+# The third outcome.
+#
+# Resolution succeeds, fails permanently, or is simply not yet - and "not yet"
+# is the state a composition spends most of its life in, so it has a condition
+# of its own rather than being an error.
+#
+# This one waits on a source that does not exist. Create it and watch the Weave
+# resolve itself with nothing else touched:
+#
+#   kubectl -n weft-demo create configmap tenant --from-literal=tenantId=acme-42
+#
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: waiting
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  sources:
+    - id: tenant
+      apiVersion: v1
+      kind: ConfigMap
+      name: tenant
+      required: true
+
+    # Asserted present, never read. A pure ordering gate.
+    #
+    # No expression mentions this anywhere in the program, so any design that
+    # infers dependencies from references would drop the edge silently. That is
+    # what `required` exists for. Create the ConfigMap above and this one still
+    # holds the Weave until `licence` exists too:
+    #
+    #   kubectl -n weft-demo create configmap licence --from-literal=ok=true
+    - id: licence
+      apiVersion: v1
+      kind: ConfigMap
+      name: licence
+      required: true
+
+  program: |
+    def compose(inputs, sources, observed):
+        return {
+            "greeting": {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "greeting"},
+                "data": {
+                    "tenant": require(sources.tenant, "data.tenantId"),
+                    # A field that will never appear on a ConfigMap, reached
+                    # with get() and a default rather than require(), so its
+                    # absence is a value rather than a wait.
+                    "provisioned": get(sources.tenant, "status.atProvider.id", "not-a-managed-resource"),
+                },
+            },
+        }

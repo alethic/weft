@@ -1,0 +1,34 @@
+# The security model, demonstrated.
+#
+# This Weave names a ServiceAccount with no permissions at all. The controller
+# runs with far more, and creates nothing anyway, because every read and every
+# write is performed as `powerless` rather than as the controller.
+#
+#   kubectl -n weft-demo describe weave forbidden
+#
+# The condition names the exact verb and resource, and gives you the two
+# commands that fix it. Run them and the Weave resolves itself - then tells you
+# about the next missing permission, one at a time, until it is done.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: forbidden
+  namespace: weft-demo
+spec:
+  serviceAccountName: powerless
+  sources:
+    - id: platform
+      apiVersion: v1
+      kind: ConfigMap
+      name: platform
+      required: true
+  program: |
+    def compose(inputs, sources, observed):
+        return {
+            "should-never-exist": {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {"name": "should-never-exist"},
+                "data": {"tenant": require(sources.platform, "data.tenantId")},
+            },
+        }

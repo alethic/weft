@@ -1,0 +1,45 @@
+# Pruning, and why it waits.
+#
+# Remove an entry from `regions` and the ConfigMap it produced is NOT deleted
+# straight away. It is held for pruneDelay first:
+#
+#   kubectl -n weft-demo patch weave pruning --type=json \
+#     -p '[{"op":"remove","path":"/spec/inputs/regions/1"}]'
+#   kubectl -n weft-demo get weave pruning \
+#     -o jsonpath='{range .status.inventory[*]}{.key}{" missing="}{.missingCount}{" since="}{.missingSince}{"\n"}{end}'
+#
+# The delay is the half that protects anything. Reconciles are event-driven and
+# the applies in one pass generate watch events of their own, so a count of them
+# measures controller activity rather than elapsed time - a resource removed
+# here reached 79 "consecutive evaluations" in 56 seconds during development.
+# A provider that drops status while it restarts would otherwise take real
+# infrastructure with it.
+#
+# This install sets pruneDelay to 45s so it can be watched.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: pruning
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  inputs:
+    regions:
+      - eastus
+      - westeurope
+      - southeastasia
+  program: |
+    def compose(inputs, sources, observed):
+        out = {}
+        for region in inputs.regions:
+            out["region-" + region] = {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": "region-" + region,
+                    # One wave, because none of these depends on another.
+                    "annotations": {"weft.run/wave": "0"},
+                },
+                "data": {"region": region},
+            }
+        return out

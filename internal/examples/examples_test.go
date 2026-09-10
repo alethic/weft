@@ -48,6 +48,59 @@ func examples(t *testing.T) []string {
 	return paths
 }
 
+// demos returns the demo Weaves, skipping the one whose whole purpose is to
+// contain programs that must fail.
+func demos(t *testing.T) []string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("..", "..", "demo", "*.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, p := range paths {
+		if strings.Contains(filepath.Base(p), "bounds") {
+			continue
+		}
+		out = append(out, p)
+	}
+	if len(out) == 0 {
+		t.Fatal("no demos found")
+	}
+	return out
+}
+
+// The demos are run against a live cluster in demo/README.md, so a demo whose
+// program no longer compiles is a broken walkthrough. Compiling them here keeps
+// that honest without needing a cluster.
+func TestDemoProgramsCompile(t *testing.T) {
+	for _, path := range demos(t) {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			w := load(t, path)
+			if w.Spec.ServiceAccountName == "" || strings.TrimSpace(w.Spec.Program) == "" {
+				t.Fatal("incomplete demo")
+			}
+
+			sources := map[string]any{}
+			for _, src := range w.Spec.Sources {
+				sources[src.ID] = resolvedSource(src)
+			}
+			_, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
+				Program:  w.Spec.Program,
+				Inputs:   jsonutil.DecodeObject(w.Spec.Inputs),
+				Sources:  sources,
+				Observed: map[string]any{},
+			})
+			var pe *eval.ProgramError
+			if errors.As(err, &pe) {
+				t.Fatalf("%s:\n%s", pe.Reason, pe.Error())
+			}
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+		})
+	}
+}
+
 func TestExamplesAreWellFormed(t *testing.T) {
 	for _, path := range examples(t) {
 		t.Run(filepath.Base(path), func(t *testing.T) {

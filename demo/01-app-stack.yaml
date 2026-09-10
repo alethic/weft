@@ -1,0 +1,217 @@
+# The whole model in one object.
+#
+# Three phases, a fan-out, a generated document, a derived Secret, and a
+# Deployment that only appears once the things it mounts exist. Every phase
+# boundary is a field that the API server writes after the apply, which is the
+# same shape as a cloud provider writing back status minutes later - just fast
+# enough to watch.
+#
+#   kubectl -n weft-demo get weave app-stack -w
+#
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: app-stack
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+
+  inputs:
+    name: shop
+    image: registry.k8s.io/pause:3.9
+    replicas: 2
+
+    # Fan-out. In a Helm chart this was a range at build time producing N copies
+    # of everything; here it is data, and the program loops over it.
+    environments:
+      - name: dev
+        replicas: 1
+        debug: true
+      - name: staging
+        replicas: 2
+        debug: true
+      - name: prod
+        replicas: 5
+        debug: false
+
+    features:
+      - name: search
+        enabled: true
+      - name: recommendations
+        enabled: false
+      - name: checkout
+        enabled: true
+
+  sources:
+    # Somebody else's object. This Weave reads it only because its
+    # ServiceAccount was granted access to it.
+    - id: platform
+      apiVersion: v1
+      kind: ConfigMap
+      name: platform
+      required: true
+
+  program: |
+    def compose(inputs, sources, observed):
+        out = {}
+
+        # Nothing can be built without these, so require() rather than get():
+        # a missing one puts the Weave in Waiting naming the exact field.
+        tenant = require(sources.platform, "data.tenantId")
+        region = get(sources.platform, "data.region", "unknown")
+
+        # An annotation key, which is not an identifier and so cannot be
+        # reached with attribute syntax. Written by whoever owns the platform
+        # ConfigMap, so it may not be there yet.
+        cluster = get(sources.platform, 'metadata.annotations["platform.example/cluster"]', "unregistered")
+
+        # ---- wave 0: the identity everything else hangs off -----------------
+        out["serviceaccount"] = {
+            "apiVersion": "v1",
+            "kind": "ServiceAccount",
+            "metadata": {
+                "name": inputs.name,
+                "annotations": {"weft.run/wave": "0"},
+            },
+        }
+
+        # The API server assigns the uid after the apply returns. Until it
+        # lands, everything downstream is simply not returned - which is
+        # exactly how a provider writing status.atProvider behaves, only
+        # faster.
+        sa_uid = get(observed, ["serviceaccount", "metadata", "uid"])
+        if not sa_uid:
+            pending("the ServiceAccount has not been assigned a uid")
+            return out
+
+        # ---- wave 1: everything derived from that identity ------------------
+
+        # Serialising a structure into a string field is the single most common
+        # thing these compositions do, so it is a builtin. Mapping order is the
+        # order written here, because a person reads this.
+        settings = {
+            "tenant": tenant,
+            "region": region,
+            "cluster": cluster,
+            "identity": {
+                "serviceAccountName": inputs.name,
+                "uid": sa_uid,
+            },
+            "features": [f.name for f in inputs.features if f.enabled],
+            "environments": {
+                e.name: {"replicas": e.replicas, "debug": e.debug}
+                for e in inputs.environments
+            },
+        }
+
+        out["values"] = {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": inputs.name + "-values",
+                "annotations": {"weft.run/wave": "1"},
+            },
+            "data": {
+                "values.yaml": to_yaml(settings),
+                "features.json": to_json([f.name for f in inputs.features if f.enabled]),
+            },
+        }
+
+        # A Secret whose contents are derived rather than stored anywhere. The
+        # uid is stable for the life of the ServiceAccount, so the token is too
+        # - and it changes if the identity is ever recreated.
+        token = sha256(tenant + ":" + sa_uid)
+        out["secret"] = {
+            "apiVersion": "v1",
+            "kind": "Secret",
+            "metadata": {
+                "name": inputs.name + "-derived",
+                "annotations": {"weft.run/wave": "1"},
+            },
+            "type": "Opaque",
+            "data": {
+                "token": b64encode(token),
+                "tenant": b64encode(tenant),
+            },
+        }
+
+        # The fan-out. One ConfigMap per environment, all in the same wave
+        # because none of them depends on another, so teardown removes them in
+        # a single step rather than one round trip at a time.
+        for env in inputs.environments:
+            out["env-" + env.name] = {
+                "apiVersion": "v1",
+                "kind": "ConfigMap",
+                "metadata": {
+                    "name": inputs.name + "-" + env.name,
+                    "annotations": {"weft.run/wave": "1"},
+                    "labels": {"environment": env.name},
+                },
+                "data": {
+                    "replicas": str(env.replicas),
+                    "debug": str(env.debug).lower(),
+                    "endpoint": "https://" + env.name + "." + region + ".example.test",
+                },
+            }
+
+        # ---- wave 2: the workload, once what it mounts exists ---------------
+        secret_uid = get(observed, ["secret", "metadata", "uid"])
+        if not secret_uid:
+            pending("the derived Secret has not been created")
+            return out
+
+        out["deployment"] = {
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "name": inputs.name,
+                "annotations": {"weft.run/wave": "2"},
+            },
+            "spec": {
+                "replicas": inputs.replicas,
+                "selector": {"matchLabels": {"app": inputs.name}},
+                "template": {
+                    "metadata": {"labels": {"app": inputs.name}},
+                    "spec": {
+                        "serviceAccountName": inputs.name,
+                        "containers": [{
+                            "name": "app",
+                            "image": inputs.image,
+                            "env": [{
+                                "name": "TENANT",
+                                "valueFrom": {
+                                    "secretKeyRef": {
+                                        "name": inputs.name + "-derived",
+                                        "key": "tenant",
+                                    },
+                                },
+                            }],
+                            "volumeMounts": [{
+                                "name": "values",
+                                "mountPath": "/etc/app",
+                                "readOnly": True,
+                            }],
+                        }],
+                        "volumes": [{
+                            "name": "values",
+                            "configMap": {"name": inputs.name + "-values"},
+                        }],
+                    },
+                },
+            },
+        }
+
+        out["service"] = {
+            "apiVersion": "v1",
+            "kind": "Service",
+            "metadata": {
+                "name": inputs.name,
+                "annotations": {"weft.run/wave": "2"},
+            },
+            "spec": {
+                "selector": {"app": inputs.name},
+                "ports": [{"port": 80, "targetPort": 80, "name": "http"}],
+            },
+        }
+
+        return out
