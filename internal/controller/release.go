@@ -83,10 +83,10 @@ func (r *WeaveReconciler) releaseAll(ctx context.Context, c *kube.Client, weave 
 // it only ever tracked.
 func partitionOwned(entries []v1alpha1.InventoryEntry) (owned, unowned []v1alpha1.InventoryEntry) {
 	for _, e := range entries {
-		if e.Unowned {
-			unowned = append(unowned, e)
-		} else {
+		if e.Owned {
 			owned = append(owned, e)
+		} else {
+			unowned = append(unowned, e)
 		}
 	}
 	return owned, unowned

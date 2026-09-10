@@ -207,7 +207,8 @@ func TestBuildStripsDerivedMetadata(t *testing.T) {
 
 func inventoryEntry(key string, wave int32, missing int32) v1alpha1.InventoryEntry {
 	return v1alpha1.InventoryEntry{
-		Key: key, APIVersion: "v1", Kind: "ConfigMap", Name: key, Wave: wave, MissingCount: missing,
+		Key: key, APIVersion: "v1", Kind: "ConfigMap", Name: key,
+		Wave: wave, MissingCount: missing, Owned: true,
 	}
 }
 
@@ -447,7 +448,7 @@ func TestMissingCountStopsAtTheThreshold(t *testing.T) {
 // reclaiming.
 func TestComputeDetectsReplacedObjects(t *testing.T) {
 	current := []v1alpha1.InventoryEntry{{
-		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing-one", Wave: 0,
+		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing-one", Wave: 0, Owned: true,
 	}}
 
 	// Same key, different name.
@@ -469,7 +470,7 @@ func TestComputeDetectsReplacedObjects(t *testing.T) {
 
 func TestComputeDetectsChangedKind(t *testing.T) {
 	current := []v1alpha1.InventoryEntry{{
-		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0,
+		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0, Owned: true,
 	}}
 
 	asSecret := map[string]any{
@@ -516,7 +517,7 @@ func TestComputeDoesNotPruneARekeyedObject(t *testing.T) {
 // pruned, or a steady state would churn.
 func TestComputeIgnoresUnchangedEntries(t *testing.T) {
 	current := []v1alpha1.InventoryEntry{{
-		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0,
+		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0, Owned: true,
 	}}
 	desired, err := Build([]eval.Resource{{Key: "thing", Object: res("thing")}}, "ns", owner())
 	if err != nil {
@@ -533,9 +534,9 @@ func TestComputeIgnoresUnchangedEntries(t *testing.T) {
 // the same reverse order everything else is.
 func TestReplacedIsOrdered(t *testing.T) {
 	current := []v1alpha1.InventoryEntry{
-		{Key: "a", APIVersion: "v1", Kind: "ConfigMap", Name: "a-old", Wave: 0},
-		{Key: "b", APIVersion: "v1", Kind: "ConfigMap", Name: "b-old", Wave: 1},
-		{Key: "c", APIVersion: "v1", Kind: "ConfigMap", Name: "c-old", Wave: 2},
+		{Key: "a", APIVersion: "v1", Kind: "ConfigMap", Name: "a-old", Wave: 0, Owned: true},
+		{Key: "b", APIVersion: "v1", Kind: "ConfigMap", Name: "b-old", Wave: 1, Owned: true},
+		{Key: "c", APIVersion: "v1", Kind: "ConfigMap", Name: "c-old", Wave: 2, Owned: true},
 	}
 	desired, err := Build([]eval.Resource{
 		{Key: "a", Object: res("a-new")},

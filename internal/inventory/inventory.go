@@ -210,7 +210,7 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 				// it honours the annotation it was applied with; deleting it
 				// would make "do not delete this" mean "unless the program is
 				// edited", which is not what it says.
-				if e.Unowned {
+				if !e.Owned {
 					d.Released = append(d.Released, e)
 				} else {
 					d.Replaced = append(d.Replaced, e)
@@ -229,7 +229,7 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 		// Marked to outlive the composition. Let it go now: hysteresis is about
 		// how long to wait before destroying something, and this is never
 		// destroyed.
-		if e.Unowned {
+		if !e.Owned {
 			d.Released = append(d.Released, e)
 			continue
 		}
@@ -267,7 +267,7 @@ func Entry(item Item, applied *unstructured.Unstructured) v1alpha1.InventoryEntr
 		Kind:       gvk.Kind,
 		Name:       item.Object.GetName(),
 		Wave:       item.Wave,
-		Unowned:    !item.Owned,
+		Owned:      item.Owned,
 	}
 	if applied != nil {
 		e.UID = applied.GetUID()

@@ -326,25 +326,25 @@ spec:
                       type: string
                     name:
                       type: string
-                    uid:
+                    owned:
                       description: |-
-                        UID of the applied object, recorded so teardown can tell a resource we
-                        created from a later resource that happens to share its name.
-                      type: string
-                    unowned:
-                      description: |-
-                        Unowned records that this resource was applied with
-                        weft.run/owned=false, so this Weave holds no owner reference on it and
-                        will never delete it.
+                        Owned records whether this Weave holds an owner reference on the
+                        resource. False means it was applied with weft.run/owned=false and will
+                        never be deleted by this Weave.
 
                         It is remembered here rather than read from the object, because the
                         moment it matters is the moment the program stopped returning it - there
                         is no returned object left to read it from.
 
-                        Stated as the negative so that the default, and anything recorded before
-                        this field existed, means owned. A field whose absence read as "unowned"
-                        would turn an upgrade into a silent amnesty on every existing inventory.
+                        Written on every entry rather than omitted when false, so that reading
+                        the inventory shows which resources this Weave will take with it and
+                        which it will leave standing.
                       type: boolean
+                    uid:
+                      description: |-
+                        UID of the applied object, recorded so teardown can tell a resource we
+                        created from a later resource that happens to share its name.
+                      type: string
                     wave:
                       description: |-
                         Wave is the apply order. Resources are applied in ascending wave and
@@ -357,6 +357,7 @@ spec:
                   - key
                   - kind
                   - name
+                  - owned
                   - wave
                   type: object
                 type: array
@@ -447,25 +448,25 @@ spec:
                       type: string
                     name:
                       type: string
-                    uid:
+                    owned:
                       description: |-
-                        UID of the applied object, recorded so teardown can tell a resource we
-                        created from a later resource that happens to share its name.
-                      type: string
-                    unowned:
-                      description: |-
-                        Unowned records that this resource was applied with
-                        weft.run/owned=false, so this Weave holds no owner reference on it and
-                        will never delete it.
+                        Owned records whether this Weave holds an owner reference on the
+                        resource. False means it was applied with weft.run/owned=false and will
+                        never be deleted by this Weave.
 
                         It is remembered here rather than read from the object, because the
                         moment it matters is the moment the program stopped returning it - there
                         is no returned object left to read it from.
 
-                        Stated as the negative so that the default, and anything recorded before
-                        this field existed, means owned. A field whose absence read as "unowned"
-                        would turn an upgrade into a silent amnesty on every existing inventory.
+                        Written on every entry rather than omitted when false, so that reading
+                        the inventory shows which resources this Weave will take with it and
+                        which it will leave standing.
                       type: boolean
+                    uid:
+                      description: |-
+                        UID of the applied object, recorded so teardown can tell a resource we
+                        created from a later resource that happens to share its name.
+                      type: string
                     wave:
                       description: |-
                         Wave is the apply order. Resources are applied in ascending wave and
@@ -478,6 +479,7 @@ spec:
                   - key
                   - kind
                   - name
+                  - owned
                   - wave
                   type: object
                 type: array

@@ -131,20 +131,18 @@ type InventoryEntry struct {
 	// unordered and self-reference creates a real internal DAG.
 	Wave int32 `json:"wave"`
 
-	// Unowned records that this resource was applied with
-	// weft.run/owned=false, so this Weave holds no owner reference on it and
-	// will never delete it.
+	// Owned records whether this Weave holds an owner reference on the
+	// resource. False means it was applied with weft.run/owned=false and will
+	// never be deleted by this Weave.
 	//
 	// It is remembered here rather than read from the object, because the
 	// moment it matters is the moment the program stopped returning it - there
 	// is no returned object left to read it from.
 	//
-	// Stated as the negative so that the default, and anything recorded before
-	// this field existed, means owned. A field whose absence read as "unowned"
-	// would turn an upgrade into a silent amnesty on every existing inventory.
-	//
-	// +optional
-	Unowned bool `json:"unowned,omitempty"`
+	// Written on every entry rather than omitted when false, so that reading
+	// the inventory shows which resources this Weave will take with it and
+	// which it will leave standing.
+	Owned bool `json:"owned"`
 
 	// MissingCount is the number of consecutive successful evaluations in
 	// which this resource was not returned.

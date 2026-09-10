@@ -71,12 +71,12 @@ func TestUnownedResourceGetsNoOwnerReference(t *testing.T) {
 	for _, e := range w.Status.Inventory {
 		switch e.Key {
 		case "keeper":
-			if !e.Unowned {
+			if e.Owned {
 				t.Error("the keeper entry should be recorded unowned")
 			}
 		case "ordinary":
-			if e.Unowned {
-				t.Error("the ordinary entry should not be recorded unowned")
+			if !e.Owned {
+				t.Error("the ordinary entry should be recorded owned")
 			}
 		}
 	}
