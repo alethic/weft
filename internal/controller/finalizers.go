@@ -66,8 +66,19 @@ func (r *WeaveReconciler) reconcileSourceFinalizers(ctx context.Context, c *kube
 					"source %q (%s %q) is being deleted; tearing down this Weave's resources before releasing it",
 					src.ID, gvk.Kind, src.Name)
 			}
+
+			// Released - and the pass still stops here.
+			//
+			// A resource being deleted stays readable until its last finalizer
+			// clears, so evaluation would succeed against it and re-apply
+			// everything that was just torn down. That recreated output then
+			// outlives the source entirely, orphaned, which is precisely the
+			// failure this feature exists to prevent.
+			weave.Status.Sources = keep
 			log.Info("released source finalizer", "source", src.ID, "kind", gvk.Kind, "name", src.Name)
-			continue
+			return waitingf(ReasonSourceDeleting,
+				"source %q (%s %q) has been released and is going away; this Weave's resources have been torn down",
+				src.ID, gvk.Kind, src.Name)
 		}
 
 		status.TeardownStartedAt = nil
