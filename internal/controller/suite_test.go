@@ -73,6 +73,12 @@ func newHarness(t *testing.T, tune func(*Options)) *harness {
 	}); err != nil {
 		t.Fatalf("creating service account: %v", err)
 	}
+	// Granted nothing, so a test can show what a Weave with no permissions does.
+	if err := testK8s.Create(ctx, &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{Name: "powerless", Namespace: ns},
+	}); err != nil {
+		t.Fatalf("creating service account: %v", err)
+	}
 	if err := testK8s.Create(ctx, &rbacv1.Role{
 		ObjectMeta: metav1.ObjectMeta{Name: "composer", Namespace: ns},
 		Rules: []rbacv1.PolicyRule{{
@@ -180,7 +186,7 @@ func (h *harness) weave(name string) *v1alpha1.Weave {
 	return &w
 }
 
-func (h *harness) create(name, program string, sources []v1alpha1.Source, inputs string) *v1alpha1.Weave {
+func (h *harness) create(name, program string, sources []v1alpha1.Source, values string) *v1alpha1.Weave {
 	h.t.Helper()
 	w := &v1alpha1.Weave{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.namespace},
@@ -190,8 +196,10 @@ func (h *harness) create(name, program string, sources []v1alpha1.Source, inputs
 			Program:            program,
 		},
 	}
-	if inputs != "" {
-		w.Spec.Inputs = &apiextensionsv1.JSON{Raw: []byte(inputs)}
+	if values != "" {
+		w.Spec.Inputs = []v1alpha1.InputSource{
+			{Values: &apiextensionsv1.JSON{Raw: []byte(values)}},
+		}
 	}
 	if err := testK8s.Create(h.ctx, w); err != nil {
 		h.t.Fatalf("creating weave: %v", err)

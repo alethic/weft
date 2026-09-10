@@ -31,7 +31,6 @@ import (
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/inventory"
-	"github.com/alethic/weft/internal/jsonutil"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/metrics"
 	"github.com/alethic/weft/internal/naming"
@@ -333,10 +332,15 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 		return pass{}, err
 	}
 
+	inputs, err := r.resolveInputs(ctx, c, weave)
+	if err != nil {
+		return pass{}, err
+	}
+
 	started := time.Now()
 	res, err := r.Evaluator.Evaluate(ctx, eval.Request{
 		Program:  weave.Spec.Program,
-		Inputs:   jsonutil.DecodeObject(weave.Spec.Inputs),
+		Inputs:   inputs,
 		Sources:  resolved.values,
 		Observed: observed,
 	})

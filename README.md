@@ -72,7 +72,10 @@ spec:
   serviceAccountName: composer
 
   inputs:
-    prefix: demo
+  # Layers, merged in order, later ones winning. A base can live in a ConfigMap
+  # somebody else maintains, with overrides written here.
+  - values:
+      prefix: demo
 
   sources:
   - id: tenant

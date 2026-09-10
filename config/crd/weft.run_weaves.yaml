@@ -55,9 +55,98 @@ spec:
             properties:
               inputs:
                 description: |-
-                  Inputs is static configuration, passed to the program as-is. Plain
-                  YAML, never templated or evaluated.
-                x-kubernetes-preserve-unknown-fields: true
+                  Inputs is static configuration, assembled from layers and passed to the
+                  program as one mapping.
+
+                  Layers are merged in order and later ones win, so a base can come from a
+                  ConfigMap somebody else maintains and be overridden inline here. Mappings
+                  merge key by key; anything else is replaced outright, which is the same
+                  rule Helm values follow and the one people already expect.
+
+                  A program cannot tell where a value came from, which is the point: moving
+                  a setting from inline to a ConfigMap is not a change to the composition.
+                items:
+                  description: InputSource is one layer of configuration. Exactly
+                    one field is set.
+                  properties:
+                    configMap:
+                      description: ConfigMap takes configuration from a ConfigMap
+                        in this namespace.
+                      properties:
+                        key:
+                          description: |-
+                            Key selects a single entry, whose content is parsed as YAML and merged as
+                            a mapping. Without it every entry becomes one input, with its value as a
+                            string.
+
+                            This is the difference between a ConfigMap of flat settings and one
+                            holding a values.yaml document, and both are common enough to deserve
+                            support.
+                          type: string
+                        name:
+                          description: Name of the object, in the Weave's own namespace.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                        optional:
+                          description: |-
+                            Optional skips this layer when the object does not exist. Without it a
+                            missing object leaves the Weave waiting, because a composition built on
+                            configuration that has not arrived is not ready.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    secret:
+                      description: |-
+                        Secret takes configuration from a Secret in this namespace.
+
+                        Read through the same impersonated client as everything else, so a Weave
+                        can only read a Secret its ServiceAccount could read directly. Be aware
+                        that a value reaching a program can be written into any resource that
+                        ServiceAccount may create.
+                      properties:
+                        key:
+                          description: |-
+                            Key selects a single entry, whose content is parsed as YAML and merged as
+                            a mapping. Without it every entry becomes one input, with its value as a
+                            string.
+
+                            This is the difference between a ConfigMap of flat settings and one
+                            holding a values.yaml document, and both are common enough to deserve
+                            support.
+                          type: string
+                        name:
+                          description: Name of the object, in the Weave's own namespace.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                        optional:
+                          description: |-
+                            Optional skips this layer when the object does not exist. Without it a
+                            missing object leaves the Weave waiting, because a composition built on
+                            configuration that has not arrived is not ready.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    values:
+                      description: |-
+                        Values is configuration written here. Plain YAML, never templated or
+                        evaluated.
+
+                        The explicit type is what lets the validation rule above see this field
+                        at all: a property with preserved unknown fields and no type is invisible
+                        to CEL, and the rule fails to compile rather than failing to apply.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                  type: object
+                  x-kubernetes-validations:
+                  - message: set exactly one of values, configMap or secret
+                    rule: '(has(self.values) ? 1 : 0) + (has(self.configMap) ? 1 :
+                      0) + (has(self.secret) ? 1 : 0) == 1'
+                type: array
+                x-kubernetes-list-type: atomic
               program:
                 description: |-
                   Program is a Starlark program defining

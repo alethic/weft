@@ -17,30 +17,31 @@ spec:
   serviceAccountName: composer
 
   inputs:
-    name: shop
-    image: registry.k8s.io/pause:3.9
-    replicas: 2
-
-    # Fan-out. In a Helm chart this was a range at build time producing N copies
-    # of everything; here it is data, and the program loops over it.
-    environments:
-      - name: dev
-        replicas: 1
-        debug: true
-      - name: staging
+    - values:
+        name: shop
+        image: registry.k8s.io/pause:3.9
         replicas: 2
-        debug: true
-      - name: prod
-        replicas: 5
-        debug: false
 
-    features:
-      - name: search
-        enabled: true
-      - name: recommendations
-        enabled: false
-      - name: checkout
-        enabled: true
+        # Fan-out. In a Helm chart this was a range at build time producing N copies
+        # of everything; here it is data, and the program loops over it.
+        environments:
+          - name: dev
+            replicas: 1
+            debug: true
+          - name: staging
+            replicas: 2
+            debug: true
+          - name: prod
+            replicas: 5
+            debug: false
+
+        features:
+          - name: search
+            enabled: true
+          - name: recommendations
+            enabled: false
+          - name: checkout
+            enabled: true
 
   sources:
     # Somebody else's object. This Weave reads it only because its

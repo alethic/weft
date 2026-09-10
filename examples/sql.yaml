@@ -16,18 +16,19 @@ spec:
   serviceAccountName: sweep-env-compose
 
   inputs:
-    prefix: sweep-env
-    resourceName: sweep-env
-    location: eastus
-    resourceGroupName: sweep-env
-    providerConfigRef:
-      name: azure-default
-    sqlcmdImage: mcr.microsoft.com/mssql-tools18:latest
-    # The app identity that needs a database user. Ranged over at build time in
-    # the original chart; here it is a list the program loops over.
-    databaseUsers:
-    - name: app
-      identity: sweep-env-app
+    - values:
+        prefix: sweep-env
+        resourceName: sweep-env
+        location: eastus
+        resourceGroupName: sweep-env
+        providerConfigRef:
+          name: azure-default
+        sqlcmdImage: mcr.microsoft.com/mssql-tools18:latest
+        # The app identity that needs a database user. Ranged over at build time in
+        # the original chart; here it is a list the program loops over.
+        databaseUsers:
+        - name: app
+          identity: sweep-env-app
 
   sources:
   - id: resourceGroup

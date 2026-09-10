@@ -12,7 +12,7 @@ def compose(inputs, sources, observed):
 
 | argument | is |
 |---|---|
-| `inputs` | `spec.inputs`, verbatim. Plain YAML, never templated. |
+| `inputs` | `spec.inputs`, assembled from its layers into one mapping. |
 | `sources` | declared sources by id, resolved through an impersonated read. A source that does not exist is `None`. |
 | `observed` | resources this Weave previously created, keyed by inventory key, read back live with current status. |
 
@@ -61,6 +61,52 @@ Repeating the same reason inside a loop is collapsed, so calling it once per
 iteration is harmless.
 
 Use `wait()` when nothing can be produced. Use `pending()` when some of it can.
+
+## Where inputs come from
+
+`spec.inputs` is a list of layers, merged in order, later ones winning:
+
+```yaml
+inputs:
+  # A base somebody else maintains.
+  - configMap:
+      name: platform
+  # A whole values.yaml document held under one key.
+  - configMap:
+      name: release-values
+      key: values.yaml
+  # Credentials, read as the Weave's own ServiceAccount.
+  - secret:
+      name: database
+      optional: true
+  # Overrides for this Weave.
+  - values:
+      replicas: 3
+      image:
+        tag: v2
+```
+
+Mappings merge key by key, so the last layer above overrides `image.tag`
+without restating `image.repository`. Anything else replaces outright, lists
+included — the rule Helm values follow.
+
+A program cannot tell where a value came from. That is the point: moving a
+setting from inline to a ConfigMap is not a change to the composition.
+
+| | |
+|---|---|
+| `values` | Written in the `Weave`. Plain YAML, never templated. |
+| `configMap` / `secret` | Every entry of `data` becomes one input, with its value as a string. A `Secret` is decoded, so it reads the same as a `ConfigMap`. |
+| `key` | Take one entry instead, parsing its content as YAML. For a `values.yaml` living in a ConfigMap. |
+| `optional` | Skip the layer when the object is missing. Without it the `Weave` waits. |
+
+These objects are read through the same impersonated client as everything else,
+so a `Weave` can only take configuration from objects its ServiceAccount could
+read directly — and they are watched, so editing one reconciles the `Weave`
+without touching it.
+
+Be aware that a value reaching a program can be written into any resource that
+ServiceAccount may create. A `Secret` layer is a convenience, not a boundary.
 
 ## Reading fields
 

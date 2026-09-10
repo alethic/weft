@@ -24,10 +24,11 @@ metadata:
 spec:
   serviceAccountName: composer
   inputs:
-    regions:
-      - eastus
-      - westeurope
-      - southeastasia
+    - values:
+        regions:
+          - eastus
+          - westeurope
+          - southeastasia
   program: |
     def compose(inputs, sources, observed):
         out = {}

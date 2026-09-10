@@ -17,8 +17,9 @@ spec:
   serviceAccountName: sweep-env-compose
 
   inputs:
-    prefix: sweep-env
-    targetConfigMap: sweep-env-values
+    - values:
+        prefix: sweep-env
+        targetConfigMap: sweep-env-values
 
   sources:
   - id: appIdentity

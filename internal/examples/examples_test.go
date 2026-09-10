@@ -17,8 +17,8 @@ import (
 
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/eval"
+	"github.com/alethic/weft/internal/inputs"
 	"github.com/alethic/weft/internal/inventory"
-	"github.com/alethic/weft/internal/jsonutil"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/naming"
 )
@@ -86,7 +86,7 @@ func TestDemoProgramsCompile(t *testing.T) {
 			}
 			_, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
 				Program:  w.Spec.Program,
-				Inputs:   jsonutil.DecodeObject(w.Spec.Inputs),
+				Inputs:   inputs.Inline(w.Spec.Inputs),
 				Sources:  sources,
 				Observed: map[string]any{},
 			})
@@ -142,7 +142,7 @@ func TestExamplesEvaluateAgainstNothing(t *testing.T) {
 
 			res, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
 				Program:  w.Spec.Program,
-				Inputs:   jsonutil.DecodeObject(w.Spec.Inputs),
+				Inputs:   inputs.Inline(w.Spec.Inputs),
 				Sources:  sources,
 				Observed: map[string]any{},
 			})
@@ -177,7 +177,7 @@ func TestExamplesProduceTheirFirstWave(t *testing.T) {
 
 			res, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
 				Program:  w.Spec.Program,
-				Inputs:   jsonutil.DecodeObject(w.Spec.Inputs),
+				Inputs:   inputs.Inline(w.Spec.Inputs),
 				Sources:  sources,
 				Observed: map[string]any{},
 			})

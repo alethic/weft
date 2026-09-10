@@ -21,43 +21,44 @@ spec:
   serviceAccountName: sweep-env-compose
 
   inputs:
-    prefix: sweep-env
-    resourceName: sweep-env
-    subscriptionId: "00000000-0000-0000-0000-000000000000"
-    location: eastus
-    resourceGroupName: sweep-env
-    providerConfigRef:
-      name: azure-default
+    - values:
+        prefix: sweep-env
+        resourceName: sweep-env
+        subscriptionId: "00000000-0000-0000-0000-000000000000"
+        location: eastus
+        resourceGroupName: sweep-env
+        providerConfigRef:
+          name: azure-default
 
-    # The role table. In the Helm chart this was a range at build time that
-    # produced N copies of an entire CronJob; here it is data, and the program
-    # loops over it. Adding a role is a one-line edit to this list.
-    #
-    # scope names one of the declared sources; principal names one of the
-    # identities created below.
-    roles:
-    - name: storage-blob-data-contributor
-      roleDefinitionId: ba92f5b4-2d11-453d-a403-e96b0029c9fe
-      scope: resourceGroup
-      principal: app
-    - name: key-vault-administrator
-      roleDefinitionId: 00482a5a-887f-4fb3-b363-3b7fe8e74483
-      scope: resourceGroup
-      principal: app
-    - name: service-bus-data-owner
-      roleDefinitionId: 090c5cfd-751d-490a-894a-3ce6f1109419
-      scope: serviceBus
-      principal: app
-    - name: cosmos-db-operator
-      roleDefinitionId: 230815da-be43-4aae-9cb4-875f7bd000aa
-      scope: cosmos
-      principal: app
-    # KEDA runs cluster-wide, so its identity is kept separate and only ever
-    # gets Service Bus Data Receiver - never the app identity's Data Owner.
-    - name: keda-service-bus-data-receiver
-      roleDefinitionId: 4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0
-      scope: serviceBus
-      principal: keda
+        # The role table. In the Helm chart this was a range at build time that
+        # produced N copies of an entire CronJob; here it is data, and the program
+        # loops over it. Adding a role is a one-line edit to this list.
+        #
+        # scope names one of the declared sources; principal names one of the
+        # identities created below.
+        roles:
+        - name: storage-blob-data-contributor
+          roleDefinitionId: ba92f5b4-2d11-453d-a403-e96b0029c9fe
+          scope: resourceGroup
+          principal: app
+        - name: key-vault-administrator
+          roleDefinitionId: 00482a5a-887f-4fb3-b363-3b7fe8e74483
+          scope: resourceGroup
+          principal: app
+        - name: service-bus-data-owner
+          roleDefinitionId: 090c5cfd-751d-490a-894a-3ce6f1109419
+          scope: serviceBus
+          principal: app
+        - name: cosmos-db-operator
+          roleDefinitionId: 230815da-be43-4aae-9cb4-875f7bd000aa
+          scope: cosmos
+          principal: app
+        # KEDA runs cluster-wide, so its identity is kept separate and only ever
+        # gets Service Bus Data Receiver - never the app identity's Data Owner.
+        - name: keda-service-bus-data-receiver
+          roleDefinitionId: 4f6d3b9b-027b-4f4c-9142-0e5a2a2247e0
+          scope: serviceBus
+          principal: keda
 
   sources:
   # The resource group's provider id is the scope for most assignments and the

@@ -58,6 +58,65 @@ type Source struct {
 	Finalize bool `json:"finalize,omitempty"`
 }
 
+// InputSource is one layer of configuration. Exactly one field is set.
+//
+// +kubebuilder:validation:XValidation:rule="(has(self.values) ? 1 : 0) + (has(self.configMap) ? 1 : 0) + (has(self.secret) ? 1 : 0) == 1",message="set exactly one of values, configMap or secret"
+type InputSource struct {
+	// Values is configuration written here. Plain YAML, never templated or
+	// evaluated.
+	//
+	// The explicit type is what lets the validation rule above see this field
+	// at all: a property with preserved unknown fields and no type is invisible
+	// to CEL, and the rule fails to compile rather than failing to apply.
+	//
+	// +optional
+	// +kubebuilder:validation:Type=object
+	// +kubebuilder:pruning:PreserveUnknownFields
+	Values *apiextensionsv1.JSON `json:"values,omitempty"`
+
+	// ConfigMap takes configuration from a ConfigMap in this namespace.
+	//
+	// +optional
+	ConfigMap *InputRef `json:"configMap,omitempty"`
+
+	// Secret takes configuration from a Secret in this namespace.
+	//
+	// Read through the same impersonated client as everything else, so a Weave
+	// can only read a Secret its ServiceAccount could read directly. Be aware
+	// that a value reaching a program can be written into any resource that
+	// ServiceAccount may create.
+	//
+	// +optional
+	Secret *InputRef `json:"secret,omitempty"`
+}
+
+// InputRef selects a ConfigMap or Secret to take configuration from.
+type InputRef struct {
+	// Name of the object, in the Weave's own namespace.
+	//
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Name string `json:"name"`
+
+	// Key selects a single entry, whose content is parsed as YAML and merged as
+	// a mapping. Without it every entry becomes one input, with its value as a
+	// string.
+	//
+	// This is the difference between a ConfigMap of flat settings and one
+	// holding a values.yaml document, and both are common enough to deserve
+	// support.
+	//
+	// +optional
+	Key string `json:"key,omitempty"`
+
+	// Optional skips this layer when the object does not exist. Without it a
+	// missing object leaves the Weave waiting, because a composition built on
+	// configuration that has not arrived is not ready.
+	//
+	// +optional
+	Optional bool `json:"optional,omitempty"`
+}
+
 // WeaveSpec defines a composition.
 type WeaveSpec struct {
 	// ServiceAccountName names a ServiceAccount in this namespace. Every read
@@ -72,12 +131,20 @@ type WeaveSpec struct {
 	// +kubebuilder:validation:MaxLength=253
 	ServiceAccountName string `json:"serviceAccountName"`
 
-	// Inputs is static configuration, passed to the program as-is. Plain
-	// YAML, never templated or evaluated.
+	// Inputs is static configuration, assembled from layers and passed to the
+	// program as one mapping.
+	//
+	// Layers are merged in order and later ones win, so a base can come from a
+	// ConfigMap somebody else maintains and be overridden inline here. Mappings
+	// merge key by key; anything else is replaced outright, which is the same
+	// rule Helm values follow and the one people already expect.
+	//
+	// A program cannot tell where a value came from, which is the point: moving
+	// a setting from inline to a ConfigMap is not a change to the composition.
 	//
 	// +optional
-	// +kubebuilder:pruning:PreserveUnknownFields
-	Inputs *apiextensionsv1.JSON `json:"inputs,omitempty"`
+	// +listType=atomic
+	Inputs []InputSource `json:"inputs,omitempty"`
 
 	// Sources are the existing resources this composition reads.
 	//
