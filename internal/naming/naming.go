@@ -50,7 +50,7 @@ var WeaveFinalizer = Group + "/" + weaveFinalizerPath
 var HeldFinalizerPrefix = Group + "/" + heldFinalizerPath
 
 // HeldFinalizer returns the finalizer a given Weave places on a resource it has
-// asked to finalize.
+// asked to hold.
 //
 // A finalizer is a qualified name: the part after the slash is limited to 63
 // characters and a restricted alphabet, so the Weave's namespace and name are
@@ -78,7 +78,22 @@ var (
 	// waves are applied first and deleted last.
 	WaveAnnotation = Group + "/wave"
 
-	// AdoptAnnotation opts an existing object into being taken over by a Weave.
+	// OwnedAnnotation decides whether Weft owns a resource it applies. Its
+	// accepted values are "true" (the default) and "false".
+	//
+	// An unowned resource is still applied and still kept up to date, but no
+	// owner reference is placed on it: it is not deleted when the program stops
+	// returning it, and not collected when the Weave is deleted. It says the
+	// object outlives the composition that describes it, which is a thing no
+	// amount of pruning hysteresis can express - hysteresis is about how long
+	// to wait, and this is about never.
+	//
+	// The absence of the reference is what makes the guarantee real rather than
+	// conditional on this controller running at the moment somebody reaches for
+	// it.
+	OwnedAnnotation = Group + "/owned"
+
+	// AdoptAnnotation opts an existing object	// AdoptAnnotation opts an existing object into being taken over by a Weave.
 	// Its value is a name, or a pattern: "*" consents to any Weave in this
 	// namespace, and "app-*" to any whose name starts with app-.
 	//

@@ -36,6 +36,11 @@ type Item struct {
 	// Wave is the apply order. Resources are applied in ascending wave and
 	// deleted in descending wave.
 	Wave int32
+
+	// Owned is false when the resource carries weft.run/owned=false. An unowned
+	// resource is applied and kept current, but no owner reference is placed on
+	// it and it is never deleted by this Weave.
+	Owned bool
 }
 
 // GroupVersionKind of the item's object.
@@ -53,7 +58,12 @@ func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Ite
 	explicit := 0
 
 	for i, r := range resources {
-		u, err := kube.Normalize(r.Object, r.Key, namespace, owner)
+		owned, err := ownedFrom(r.Object, r.Key)
+		if err != nil {
+			return nil, err
+		}
+
+		u, err := kube.Normalize(r.Object, r.Key, namespace, owner, owned)
 		if err != nil {
 			return nil, fmt.Errorf("resource %q %w", r.Key, err)
 		}
@@ -67,7 +77,7 @@ func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Ite
 			wave = int32(n)
 			explicit++
 		}
-		items = append(items, Item{Key: r.Key, Object: u, Wave: wave})
+		items = append(items, Item{Key: r.Key, Object: u, Wave: wave, Owned: owned})
 	}
 
 	// Mixing explicit waves with positional defaults produces an order nobody
@@ -82,6 +92,29 @@ func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Ite
 	return items, nil
 }
 
+// ownedFrom reads the ownership annotation off a returned resource.
+//
+// A typo is rejected rather than ignored. "owned: no" quietly meaning "owned"
+// is precisely the failure this annotation exists to prevent, and it would only
+// be discovered by the object being deleted.
+func ownedFrom(obj map[string]any, key string) (bool, error) {
+	md, _ := obj["metadata"].(map[string]any)
+	annotations, _ := md["annotations"].(map[string]any)
+	raw, ok := annotations[naming.OwnedAnnotation]
+	if !ok {
+		return true, nil
+	}
+	switch raw {
+	case "true":
+		return true, nil
+	case "false":
+		return false, nil
+	default:
+		return false, fmt.Errorf("resource %q has %s=%v, which must be \"true\" or \"false\"",
+			key, naming.OwnedAnnotation, raw)
+	}
+}
+
 // Diff classifies an existing inventory against a freshly evaluated set.
 type Diff struct {
 	// Apply is everything the program returned, in ascending wave.
@@ -93,6 +126,14 @@ type Diff struct {
 
 	// Prune is inventory absent for long enough to delete, in descending wave.
 	Prune []v1alpha1.InventoryEntry
+
+	// Released is inventory that is no longer described and was applied
+	// unowned, so the record is dropped and the object left standing.
+	//
+	// No hysteresis applies. Waiting exists to avoid destroying something over
+	// a transient absence, and nothing here is destroyed - a release that turns
+	// out to be premature is undone by the next pass recording it again.
+	Released []v1alpha1.InventoryEntry
 
 	// Replaced is inventory whose key is still returned but which now names a
 	// different object, because the program was edited to change a name or a
@@ -165,7 +206,15 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 			// changes a name or a kind under a stable key leaves the old object
 			// behind, and nothing would ever look at it again.
 			if idOfEntry(e) != id {
-				d.Replaced = append(d.Replaced, e)
+				// The old object is no longer described by anything. Releasing
+				// it honours the annotation it was applied with; deleting it
+				// would make "do not delete this" mean "unless the program is
+				// edited", which is not what it says.
+				if e.Unowned {
+					d.Released = append(d.Released, e)
+				} else {
+					d.Replaced = append(d.Replaced, e)
+				}
 			}
 			continue
 		}
@@ -174,6 +223,14 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 		// rather than dropped. Deleting it would destroy something the program
 		// still asks for; the new key owns the record now.
 		if claimed[idOfEntry(e)] {
+			continue
+		}
+
+		// Marked to outlive the composition. Let it go now: hysteresis is about
+		// how long to wait before destroying something, and this is never
+		// destroyed.
+		if e.Unowned {
+			d.Released = append(d.Released, e)
 			continue
 		}
 		// Capped, because status writes wake the Weave through its own watch
@@ -193,6 +250,7 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 	}
 	sortDescending(d.Prune)
 	sortDescending(d.Replaced)
+	sortDescending(d.Released)
 	return d
 }
 
@@ -209,6 +267,7 @@ func Entry(item Item, applied *unstructured.Unstructured) v1alpha1.InventoryEntr
 		Kind:       gvk.Kind,
 		Name:       item.Object.GetName(),
 		Wave:       item.Wave,
+		Unowned:    !item.Owned,
 	}
 	if applied != nil {
 		e.UID = applied.GetUID()

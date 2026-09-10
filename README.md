@@ -184,6 +184,21 @@ same `Weave` on each of them says nothing extra.
 [docs/ownership.md](docs/ownership.md) covers the whole story, including what
 happens when a program is edited to change what a key addresses.
 
+An individual resource can opt out of being owned, so that it outlives the
+composition describing it:
+
+```python
+"metadata": {
+    "name": "app-db",
+    "annotations": {"weft.run/owned": "false"},
+}
+```
+
+Weft applies it and keeps it current, but places no owner reference: it is not
+deleted when the program stops returning it, and not collected when the `Weave`
+is deleted. The absence of the reference is what makes that true whether or not
+this controller is running.
+
 ### Keys are identity, not position
 
 The keys of the returned mapping identify the live objects. Reordering a list
@@ -270,7 +285,7 @@ has four longer compositions taken from real Crossplane workloads.
 | flag | default | why you would change it |
 |---|---|---|
 | `--prune-delay` | `2m` | how long a resource must be gone before deletion |
-| `--hold-timeout` | `10m` | how long a `finalize=True` read may block somebody else's object |
+| `--hold-timeout` | `10m` | how long a `hold=True` read may block somebody else's object |
 | `--teardown-timeout` | `15m` | how long ordered teardown runs before cascading collection takes over |
 | `--max-reads` | `100` | distinct resources one evaluation may read |
 | `--max-selected` | `500` | objects one `select()` may match |
@@ -301,7 +316,7 @@ resources instead, use the verb Kubernetes already has for it:
 kubectl delete weave app --cascade=orphan
 ```
 
-If any program uses `read(..., finalize=True)`, release those finalizers
+If any program uses `read(..., hold=True)`, release those finalizers
 **before** removing the controller, or the objects holding them cannot be
 deleted:
 

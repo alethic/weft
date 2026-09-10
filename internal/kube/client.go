@@ -388,6 +388,48 @@ func (c *Client) MutateFinalizers(ctx context.Context, gvk schema.GroupVersionKi
 	return changed, nil
 }
 
+// RemoveOwnerReference drops one owner reference from an object, retrying on
+// conflict. It is a no-op when the reference is not there.
+//
+// This is what releasing a resource means: the object stays, but it is no
+// longer collateral when the owner is deleted. Server-side apply cannot do it -
+// apply adds and updates fields, and an owner reference this Weave placed can
+// only be taken back off by writing the object.
+func (c *Client) RemoveOwnerReference(ctx context.Context, gvk schema.GroupVersionKind, name string, uid types.UID) error {
+	gvr, err := c.resourceFor(gvk)
+	if err != nil {
+		return err
+	}
+	ri := c.dyn.Resource(gvr).Namespace(c.namespace)
+
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := ri.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return asPermissionError(err, c.namespace, c.serviceAccount, "get", gvr, gvk.Kind, name)
+		}
+
+		refs := obj.GetOwnerReferences()
+		kept := make([]metav1.OwnerReference, 0, len(refs))
+		for _, ref := range refs {
+			if ref.UID != uid {
+				kept = append(kept, ref)
+			}
+		}
+		if len(kept) == len(refs) {
+			return nil
+		}
+
+		obj.SetOwnerReferences(kept)
+		if _, err := ri.Update(ctx, obj, metav1.UpdateOptions{FieldManager: naming.FieldManager}); err != nil {
+			if apierrors.IsConflict(err) {
+				return err
+			}
+			return asPermissionError(err, c.namespace, c.serviceAccount, "update", gvr, gvk.Kind, name)
+		}
+		return nil
+	})
+}
+
 // CanI asks the API server whether the impersonated subject may perform a verb,
 // without attempting it.
 //

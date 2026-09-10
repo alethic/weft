@@ -100,6 +100,29 @@ instead.
   is refused for another regardless of the annotation, because the two would
   apply over each other on every reconcile.
 
+## Opting a resource out of ownership
+
+A resource annotated `weft.run/owned: "false"` is applied without an owner
+reference. Weft keeps it current for as long as the program returns it, and
+never deletes it: not when it leaves the returned set, not when the `Weave` is
+deleted.
+
+```python
+"metadata": {
+    "name": "app-db",
+    "annotations": {"weft.run/owned": "false"},
+}
+```
+
+This is the per-resource form of `--cascade=orphan`, decided by whoever wrote
+the composition rather than by whoever deletes the `Weave`. Reach for it when
+the object outlives the thing describing it.
+
+Leaving the returned set drops the inventory entry immediately, with no
+hysteresis: hysteresis exists to avoid destroying something over a transient
+absence, and nothing here is destroyed. An event records it, and the object
+keeps its `weft.run/weave` label.
+
 ## Deleting a Weave takes its resources
 
 Deleting a `Weave` deletes what it created, in reverse wave order. That is not
@@ -186,6 +209,10 @@ Replacements are removed in reverse wave order, the same as everything else, and
 no hysteresis applies. A replacement is a statement rather than an absence: the
 program said the object is different, so there is nothing to wait out.
 
+An unowned object is released here instead of deleted, for the same reason it is
+released anywhere else — otherwise "do not delete this" would quietly mean
+"unless the program is edited", which is not what it says.
+
 ## When an object moves to a different key
 
 The opposite edit — the same object returned under a new key — deletes nothing.
@@ -213,4 +240,5 @@ The record moves; the object does not move at all.
 | an object moves to a new key | record moves, object untouched |
 | a key stops being returned | pruned, after the delay |
 | the `Weave` is deleted | its resources are deleted, in reverse wave order |
+| a resource is annotated `weft.run/owned: "false"` | never deleted; released when it leaves the set |
 | the `Weave` is deleted with `--cascade=orphan` | resources kept, owner references stripped |

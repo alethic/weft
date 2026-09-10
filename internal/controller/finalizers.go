@@ -16,7 +16,7 @@ import (
 )
 
 // Holds are the opt-in finalizers a program asks for with
-// read(..., finalize=True).
+// read(..., hold=True).
 //
 // This orders the deletion of an API object, and nothing more. It does not
 // order the destruction of whatever that object represents: a managed resource
@@ -106,7 +106,7 @@ func (r *WeaveReconciler) reconcileHolds(ctx context.Context, c *kube.Client, we
 		if !allowed {
 			perm := c.PermissionErrorFor("update", gvk, want.Name)
 			return degradedf(ReasonForbidden,
-				"this program reads %s %q with finalize=True, which needs permission to update it.\n%s\n\n%s",
+				"this program reads %s %q with hold=True, which needs permission to update it.\n%s\n\n%s",
 				gvk.Kind, want.Name, perm.Summary(), perm.Fix())
 		}
 

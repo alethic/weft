@@ -99,7 +99,7 @@ func bindFlags(fs *flag.FlagSet, c *config) {
 			"deleted. This is the half of the hysteresis that actually protects anything: reconciles are "+
 			"event-driven, so a count of them measures controller activity rather than elapsed time.")
 	fs.DurationVar(&c.opts.HoldTimeout, "hold-timeout", d.HoldTimeout,
-		"How long a finalizer placed by read(..., finalize=True) may block that resource's deletion before it is "+
+		"How long a finalizer placed by read(..., hold=True) may block that resource's deletion before it is "+
 			"released anyway.")
 	fs.DurationVar(&c.opts.TeardownTimeout, "teardown-timeout", d.TeardownTimeout,
 		"How long ordered teardown of a deleting Weave may run before the rest is handed to cascading collection.")

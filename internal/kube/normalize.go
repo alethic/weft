@@ -41,7 +41,7 @@ var derivedMetadata = []string{
 // garbage collection sufficient and is why there is no ApplySet machinery
 // anywhere in this codebase. The cross-namespace and cluster-scoped cases that
 // would force something more elaborate are not expressible.
-func Normalize(obj map[string]any, key, namespace string, owner Owner) (*unstructured.Unstructured, error) {
+func Normalize(obj map[string]any, key, namespace string, owner Owner, owned bool) (*unstructured.Unstructured, error) {
 	u := &unstructured.Unstructured{Object: obj}
 
 	if ns := u.GetNamespace(); ns != "" && ns != namespace {
@@ -78,16 +78,21 @@ func Normalize(obj map[string]any, key, namespace string, owner Owner) (*unstruc
 		return nil, fmt.Errorf("metadata.name is %d characters; the limit is 253", len(name))
 	}
 
-	blockOwnerDeletion := true
-	controller := true
-	u.SetOwnerReferences([]metav1.OwnerReference{{
-		APIVersion:         owner.APIVersion,
-		Kind:               owner.Kind,
-		Name:               owner.Name,
-		UID:                owner.UID,
-		Controller:         &controller,
-		BlockOwnerDeletion: &blockOwnerDeletion,
-	}})
+	// An unowned resource gets no reference at all. Setting one and taking it
+	// off later would leave a window in which deleting the Weave collects an
+	// object that was never meant to be collected.
+	if owned {
+		blockOwnerDeletion := true
+		controller := true
+		u.SetOwnerReferences([]metav1.OwnerReference{{
+			APIVersion:         owner.APIVersion,
+			Kind:               owner.Kind,
+			Name:               owner.Name,
+			UID:                owner.UID,
+			Controller:         &controller,
+			BlockOwnerDeletion: &blockOwnerDeletion,
+		}})
+	}
 
 	labels := u.GetLabels()
 	if labels == nil {

@@ -18,7 +18,7 @@ That ServiceAccount needs, in the Weave's own namespace:
 - `get`, `create` and `patch` on every kind the program returns. Server-side
   apply requires `patch`.
 - `delete` on those kinds, for pruning and teardown.
-- `update` on anything read with `finalize=True`.
+- `update` on anything read with `hold=True`.
 
 Nothing declares any of this, so nothing can be checked ahead of running the
 program. The read is where the denial happens, and the read is where it is
@@ -176,7 +176,7 @@ subject, so the audit log shows who a change was really made for:
 
 ## Finalizers
 
-`read(..., finalize=True)` places a finalizer on an object the `Weave` does not
+`read(..., hold=True)` places a finalizer on an object the `Weave` does not
 own. Weft checks it can *remove* that finalizer on every pass, not only when
 adding it, because a RoleBinding revoked afterwards would otherwise leave a
 finalizer nobody can lift — deadlocking the object and the namespace it lives

@@ -117,7 +117,7 @@ Filtering on `impersonatedUser` gives every change a given composition made.
 - Leave `crds.keep` on, so an uninstall cannot cascade into deleting every
   `Weave` and the infrastructure they own.
 - Run `weft reap` before removing the controller if any program uses
-  `read(..., finalize=True)`.
+  `read(..., hold=True)`.
 
 ## Supported versions
 

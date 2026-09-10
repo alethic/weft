@@ -49,7 +49,7 @@ type Options struct {
 	// them measures controller activity rather than elapsed time.
 	PruneDelay time.Duration
 
-	// HoldTimeout bounds how long a finalizer placed by read(..., finalize=True)
+	// HoldTimeout bounds how long a finalizer placed by read(..., hold=True)
 	// on somebody else's object may block its deletion.
 	HoldTimeout time.Duration
 
@@ -408,6 +408,15 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 		r.eventf(weave, "Normal", "Replaced", "removed %d resources the program replaced", len(superseded))
 	}
 
+	// Anything applied unowned is let go before anything is deleted. It is not
+	// a teardown step and cannot fail into one.
+	if len(diff.Released) > 0 {
+		if err := r.releaseAll(ctx, c, weave, diff.Released); err != nil {
+			return pass{}, err
+		}
+		weave.Status.Inventory = inventory.Merge(applied, concat(diff.Retained, diff.Prune))
+	}
+
 	out := pass{summary: summarize(len(applied), len(diff.Retained)), pending: res.Pending}
 	if len(diff.Retained) > 0 {
 		out.wakeIn = requeueFor(diff.Retained, r.Opts.PruneDelay)
@@ -465,6 +474,18 @@ func (r *WeaveReconciler) reconcileDeletion(ctx context.Context, weave *v1alpha1
 			log.Error(err, "releasing source finalizers")
 		}
 		return r.finishDeletion(ctx, weave, key)
+	}
+
+	// An unowned resource outlives its composition, and the Weave being deleted
+	// is the strongest form of that. It carries no owner reference, so nothing
+	// would collect it anyway; dropping it from the inventory here keeps
+	// teardown from reporting resources it is not removing.
+	owned, unowned := partitionOwned(weave.Status.Inventory)
+	if len(unowned) > 0 {
+		if err := r.releaseAll(ctx, c, weave, unowned); err != nil {
+			log.Error(err, "releasing unowned resources")
+		}
+		weave.Status.Inventory = owned
 	}
 
 	overdue := elapsed(weave.DeletionTimestamp) > r.Opts.TeardownTimeout

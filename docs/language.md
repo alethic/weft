@@ -87,7 +87,7 @@ Use `wait()` when nothing can be produced. Use `pending()` when some of it can.
 ## Reading the cluster
 
 ```python
-read(apiVersion, kind, name, finalize=False)   # one object, or nothing
+read(apiVersion, kind, name, hold=False)   # one object, or nothing
 select(apiVersion, kind, labels={})            # a list, sorted by name
 ```
 
@@ -147,13 +147,13 @@ It returns a list where `read` returns an object, which is why it has its own
 name rather than being a keyword away — the shape of the answer should not
 depend on which argument was passed.
 
-### `finalize=True`
+### `hold=True`
 
 ```python
-up = read("v1", "ConfigMap", "upstream", finalize=True)
+up = read("v1", "ConfigMap", "upstream", hold=True)
 ```
 
-Places a finalizer on the resource, so that when somebody deletes it this
+Holds the resource open with a finalizer, so that when somebody deletes it this
 `Weave` tears down what it derived from it *first*. It needs `update` permission
 on that resource, and it is released after `--hold-timeout` regardless of
 progress: blocking somebody else's object, and their namespace deletion, forever
@@ -354,6 +354,38 @@ Each value must carry `apiVersion`, `kind` and `metadata.name`.
 
 Weft adds a `weft.run/weave` label and a `weft.run/key` annotation to everything
 it creates, so `kubectl get <kind> -l weft.run/weave=<name>` works.
+
+### `weft.run/owned: "false"`
+
+An unowned resource is applied and kept current like any other, but no owner
+reference is placed on it. It is not deleted when the program stops returning
+it, and not collected when the `Weave` is deleted:
+
+```python
+"metadata": {
+    "name": "app-db",
+    "annotations": {"weft.run/owned": "false"},
+}
+```
+
+Use it for the thing that outlives the composition describing it — a database
+whose contents matter more than the `Weave` that asked for it. No amount of
+pruning hysteresis says this: hysteresis is about how long to wait, and this is
+about never.
+
+The absence of the owner reference is what makes it true. Weft could instead
+remember not to delete it, but then the guarantee would hold only while this
+controller is running and correct, which is the one moment it needs not to
+depend on.
+
+When such a resource leaves the returned set, the inventory entry is dropped at
+once — there is no hysteresis, because nothing is being destroyed — and an event
+records what was let go. It keeps its `weft.run/weave` label, so it is still
+findable as something this `Weave` once made.
+
+The only accepted values are `"true"` and `"false"`. Anything else is refused,
+because `"no"` quietly meaning "owned" would only be discovered by the object
+being deleted.
 
 A resource that already exists and was not created by this `Weave` is refused
 rather than taken over, unless the object itself carries

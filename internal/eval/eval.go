@@ -125,13 +125,13 @@ type Reader interface {
 	// Finalize asks the caller to hold the resource against deletion until this
 	// composition's outputs are torn down. It is a request recorded for the
 	// caller to act on after evaluation, not a write performed during it.
-	Read(ctx context.Context, apiVersion, kind, name string, finalize bool) (map[string]any, error)
+	Read(ctx context.Context, apiVersion, kind, name string, hold bool) (map[string]any, error)
 
 	// Select returns every object of this kind matching the labels, in any
 	// order. An empty selector matches everything of that kind in the
 	// namespace.
 	//
-	// There is no finalize form. Holding a set against deletion means holding
+	// There is no hold form. Holding a set against deletion means holding
 	// membership that changes underneath the hold, and a composition that needs
 	// ordering against one specific object can read it by name.
 	Select(ctx context.Context, apiVersion, kind string, labels map[string]string) ([]map[string]any, error)

@@ -206,7 +206,7 @@ def compose(variable, observed):
 	}
 }
 
-// finalize=True holds a resource against deletion, and the hold is recorded so
+// hold=True holds a resource against deletion, and the hold is recorded so
 // it can be released by a controller that never runs the program again.
 func TestFinalizeRecordsAndPlacesAHold(t *testing.T) {
 	h := newHarness(t, nil)
@@ -214,7 +214,7 @@ func TestFinalizeRecordsAndPlacesAHold(t *testing.T) {
 
 	h.create("holder", `
 def compose(variable, observed):
-    up = read("v1", "ConfigMap", "upstream", finalize=True)
+    up = read("v1", "ConfigMap", "upstream", hold=True)
     if not up:
         return wait("no upstream yet")
     return {
@@ -249,7 +249,7 @@ func TestHoldIsReleasedWhenTheProgramStopsAskingForIt(t *testing.T) {
 
 	h.create("relaxing", `
 def compose(variable, observed):
-    read("v1", "ConfigMap", "upstream", finalize=True)
+    read("v1", "ConfigMap", "upstream", hold=True)
     return {}
 `, "")
 	h.settle("relaxing", 2)

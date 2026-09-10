@@ -14,6 +14,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
@@ -45,6 +46,7 @@ type harness struct {
 	namespace  string
 	reconciler *WeaveReconciler
 	registry   *watches.Registry
+	events     *record.FakeRecorder
 	cancel     context.CancelFunc
 }
 
@@ -144,17 +146,42 @@ func newHarness(t *testing.T, tune func(*Options)) *harness {
 	if tune != nil {
 		tune(&opts)
 	}
+	// Buffered well past what any one test produces, so a full channel never
+	// silently drops the event a test is about to assert on.
+	events := record.NewFakeRecorder(256)
+
 	r := &WeaveReconciler{
 		Client:    testK8s,
 		Scheme:    testK8s.Scheme(),
 		Factory:   factory,
 		Evaluator: eval.NewStarlark(eval.Options{}),
 		Watches:   registry,
+		Recorder:  events,
 		Opts:      opts,
 	}
 	r.Opts.applyDefaults()
 
-	return &harness{t: t, ctx: ctx, namespace: ns, reconciler: r, registry: registry, cancel: cancel}
+	return &harness{
+		t: t, ctx: ctx, namespace: ns,
+		reconciler: r, registry: registry, events: events, cancel: cancel,
+	}
+}
+
+// recordedEvent drains what has been emitted so far and reports whether any of
+// it carries both the reason and the substring.
+func (h *harness) recordedEvent(reason, substr string) bool {
+	h.t.Helper()
+	found := false
+	for {
+		select {
+		case e := <-h.events.Events:
+			if strings.Contains(e, reason) && strings.Contains(e, substr) {
+				found = true
+			}
+		default:
+			return found
+		}
+	}
 }
 
 // reconcile runs one pass and fails the test on an unexpected error.

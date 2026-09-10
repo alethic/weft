@@ -39,7 +39,7 @@ type weaveReader struct {
 	// matters.
 	kinds map[schema.GroupVersionKind]bool
 
-	// holds is every resource the program asked to finalize, by identity.
+	// holds is every resource the program asked to hold, by identity.
 	holds map[string]v1alpha1.HeldResource
 
 	// deleting names the held resources found mid-deletion during this pass.
@@ -62,7 +62,7 @@ func refKey(apiVersion, kind, name string) string {
 }
 
 // Read implements eval.Reader.
-func (r *weaveReader) Read(ctx context.Context, apiVersion, kind, name string, finalize bool) (map[string]any, error) {
+func (r *weaveReader) Read(ctx context.Context, apiVersion, kind, name string, hold bool) (map[string]any, error) {
 	gvk, err := parseGVK(apiVersion, kind)
 	if err != nil {
 		return nil, degradedf(ReasonInvalidSpec, "read(%q, %q, %q): %v", apiVersion, kind, name, err)
@@ -77,7 +77,7 @@ func (r *weaveReader) Read(ctx context.Context, apiVersion, kind, name string, f
 		return nil, err
 	}
 
-	if finalize && obj != nil {
+	if hold && obj != nil {
 		held := v1alpha1.HeldResource{APIVersion: apiVersion, Kind: kind, Name: name}
 		r.holds[refKey(apiVersion, kind, name)] = held
 		if obj.GetDeletionTimestamp() != nil {
@@ -169,7 +169,7 @@ func (r *weaveReader) reads() []v1alpha1.ReadRef {
 	return out
 }
 
-// requestedHolds returns the finalize requests made this pass, in a stable
+// requestedHolds returns the hold requests made this pass, in a stable
 // order.
 func (r *weaveReader) requestedHolds() []v1alpha1.HeldResource {
 	out := make([]v1alpha1.HeldResource, 0, len(r.holds))

@@ -57,7 +57,7 @@ holds cluster-admin. This is only needed for a templated group such as
 system:serviceaccounts:{namespace}.
 {{- end }}
 
-BEFORE YOU UNINSTALL: if any Weave reads a resource with finalize=True, Weft
+BEFORE YOU UNINSTALL: if any Weave reads a resource with hold=True, Weft
 has placed finalizers on objects it does not own. Release them first, or those
 objects cannot be deleted and neither can their namespaces:
 

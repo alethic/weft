@@ -1,6 +1,6 @@
 # A finalizer on somebody else's object.
 #
-# read(..., finalize=True) asks Weft to hold a resource open until what was
+# read(..., hold=True) asks Weft to hold a resource open until what was
 # derived from it has been torn down. Deleting it blocks, the outputs go first,
 # then the finalizer is released and it disappears:
 #
@@ -27,7 +27,7 @@ spec:
   serviceAccountName: composer
   program: |
     def compose(variable, observed):
-        upstream = read("v1", "ConfigMap", "upstream", finalize=True)
+        upstream = read("v1", "ConfigMap", "upstream", hold=True)
         return {
             "derived": {
                 "apiVersion": "v1",

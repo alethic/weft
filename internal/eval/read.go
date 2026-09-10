@@ -30,7 +30,7 @@ type errReadFailed struct{ err error }
 func (e *errReadFailed) Error() string { return e.err.Error() }
 func (e *errReadFailed) Unwrap() error { return e.err }
 
-// bRead implements read(apiVersion, kind, name, finalize=False).
+// bRead implements read(apiVersion, kind, name, hold=False).
 //
 // This is the whole of a composition's access to the cluster. It replaces a
 // declared source list, and the reason it can is that the caller records every
@@ -45,12 +45,12 @@ func (e *errReadFailed) Unwrap() error { return e.err }
 //	    return wait("the database has not been created yet")
 func bRead(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var apiVersion, kind, name string
-	var finalize bool
+	var hold bool
 	if err := starlark.UnpackArgs(fn.Name(), args, kwargs,
 		"apiVersion", &apiVersion,
 		"kind", &kind,
 		"name", &name,
-		"finalize?", &finalize,
+		"hold?", &hold,
 	); err != nil {
 		return nil, err
 	}
@@ -83,7 +83,7 @@ func bRead(thread *starlark.Thread, fn *starlark.Builtin, args starlark.Tuple, k
 		s.seen[id] = true
 	}
 
-	obj, err := s.reader.Read(s.ctx, apiVersion, kind, name, finalize)
+	obj, err := s.reader.Read(s.ctx, apiVersion, kind, name, hold)
 	if err != nil {
 		return nil, &errReadFailed{err: err}
 	}
