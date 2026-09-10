@@ -318,15 +318,6 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 		return pass{}, err
 	}
 
-	if len(resolved.missingRequired) > 0 {
-		// A required source gates evaluation even when no field is read from
-		// it. This is the only way to express a pure ordering edge, and any
-		// design that infers dependencies from expression references alone
-		// drops it silently.
-		return pass{}, waitingf(ReasonSourceMissing,
-			"waiting for %s", joinWithAnd(resolved.missingRequired))
-	}
-
 	observed, err := r.readObserved(ctx, c, weave)
 	if err != nil {
 		return pass{}, err

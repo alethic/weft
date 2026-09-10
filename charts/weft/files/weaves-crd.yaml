@@ -170,12 +170,21 @@ spec:
               sources:
                 description: Sources are the existing resources this composition reads.
                 items:
-                  description: |-
-                    Source declares an existing resource to read.
-
-                    The source list is static and declarative on purpose: it is what the
-                    permission precheck and the watch registration key off, so it can never be
-                    derived from evaluation. A program cannot reach a resource not declared here.
+                  description: "Source declares an existing resource this composition
+                    reads, or waits on.\n\nSources are resources; inputs are keys.
+                    A program reaches a source through\nsources.<id> and gets the
+                    whole object, or None when it does not exist.\n\nWhether an absent
+                    source should block is the program's decision, written in\nits
+                    body rather than declared here:\n\n\tif not sources.database:\n\t
+                    \   return wait(\"the database has not been created yet\")\n\nwhich
+                    also expresses the thing a flag on this struct could not - gating
+                    that\ndepends on configuration:\n\n\tif inputs.useSql and not
+                    sources.database:\n\t    return wait(\"SQL is enabled but the
+                    database is not there yet\")\n\nThe list itself is static and
+                    declarative, because it is what the permission\nchecks and the
+                    watch registration key off, and neither can wait for an\nevaluation
+                    that needs the sources first. A program cannot reach a resource\nnot
+                    declared here."
                   properties:
                     apiVersion:
                       description: |-
@@ -212,13 +221,6 @@ spec:
                         cross-namespace reads are not expressible.
                       minLength: 1
                       type: string
-                    required:
-                      description: |-
-                        Required gates evaluation on this resource existing, even when the
-                        program never reads a field from it. Without this there is no way to
-                        express a pure ordering edge, because a dependency that is never
-                        referenced is invisible to any form of reference inference.
-                      type: boolean
                   required:
                   - apiVersion
                   - id

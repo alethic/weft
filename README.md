@@ -82,7 +82,6 @@ spec:
     apiVersion: v1
     kind: ConfigMap
     name: tenant
-    required: true
 
   program: |
     def compose(inputs, sources, observed):
@@ -196,18 +195,26 @@ out[key] = {
 Either annotate every resource or none; mixing explicit waves with positional
 defaults produces an order nobody wrote, and is rejected.
 
-### Ordering gates with no field read
+### Waiting on a resource nothing reads
 
 A dependency that is never referenced is invisible to any design that infers
-edges from expression references. `required` exists for exactly that:
+edges from expression references. Weft does not infer: sources are declared, and
+whether an absent one should block is a line in the program.
 
-```yaml
-sources:
-- id: database
-  apiVersion: sql.azure.m.upbound.io/v1beta1
-  kind: MSSQLDatabase
-  name: app
-  required: true      # must exist before anything is generated
+```python
+def compose(inputs, sources, observed):
+    # Nothing below reads a field off the database. Its existence is the
+    # requirement.
+    if not sources.database:
+        return wait("the database has not been created yet")
+```
+
+Which also expresses what a flag on the source could not — a gate that depends
+on configuration:
+
+```python
+if inputs.useSql and not sources.database:
+    return wait("SQL is enabled but the database is not there yet")
 ```
 
 ### Pruning

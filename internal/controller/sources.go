@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -25,9 +24,6 @@ type resolvedSources struct {
 	// objects keeps the live objects for the sources that exist, needed for
 	// finalizer handling.
 	objects map[string]*unstructured.Unstructured
-
-	// missingRequired names required sources that do not exist.
-	missingRequired []string
 }
 
 // resolveSources reads every declared source through the impersonated client.
@@ -59,21 +55,16 @@ func (r *WeaveReconciler) resolveSources(ctx context.Context, c *kube.Client, we
 			out.objects[src.ID] = obj
 
 		case apierrors.IsNotFound(err):
-			// Absence is a value the program can see, so that an optional
-			// source can be handled in the composition rather than by the
-			// controller. A required one gates evaluation instead.
+			// Absence is a value the program sees, not a verdict the controller
+			// reaches on its behalf. Whether it should block, and under what
+			// conditions, is a decision only the composition can make.
 			out.values[src.ID] = nil
-			if src.Required {
-				out.missingRequired = append(out.missingRequired,
-					fmt.Sprintf("%s %q (source %q)", gvk.Kind, src.Name, src.ID))
-			}
 
 		default:
 			return nil, sourceReadError(src, gvk, err)
 		}
 	}
 
-	sort.Strings(out.missingRequired)
 	return out, nil
 }
 

@@ -83,7 +83,6 @@ sources:
   apiVersion: azure.m.upbound.io/v1beta1
   kind: ResourceGroup
   name: sweep-env
-  required: true
 ```
 
 ```python
@@ -127,8 +126,15 @@ to break when someone adds a level of nesting:
 
 One composition declared `MSSQLDatabase` as a source, asserted it existed, and
 never read a field from it. There is no expression to infer that dependency
-from, so any design that derives edges from references drops it silently.
-`required: true` is how it survives the port.
+from, so any design that derives edges from references drops it silently. Weft
+does not infer - the source is declared, and the assertion ports directly:
+
+```python
+if not sources.database:
+    return wait("the MSSQLDatabase has not been created yet")
+```
+
+which is the `assert` from the original template, in the same place it was.
 
 ## A bug worth carrying forward
 

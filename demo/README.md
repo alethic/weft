@@ -102,9 +102,14 @@ kubectl -n weft-demo create configmap tenant --from-literal=tenantId=acme-42
 kubectl -n weft-demo create configmap licence --from-literal=ok=true
 ```
 
-`licence` is never read by the program. No expression mentions it, so any design
-that infers dependencies from references would drop that edge silently — which
-is what `required: true` exists for.
+`licence` is never read for a value — its existence is the whole requirement.
+The gate is a line in the program rather than a flag on the source, which is
+what lets it be conditional:
+
+```python
+if inputs.needsLicence and not sources.licence:
+    return wait("no licence ConfigMap in this namespace yet")
+```
 
 ## 03 — why impersonation is the whole point
 

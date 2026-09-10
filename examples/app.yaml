@@ -67,19 +67,16 @@ spec:
     apiVersion: azure.m.upbound.io/v1beta1
     kind: ResourceGroup
     name: sweep-env
-    required: true
 
   - id: serviceBus
     apiVersion: servicebus.azure.m.upbound.io/v1beta1
     kind: ServiceBusNamespace
     name: sweep-env
-    required: true
 
   - id: cosmos
     apiVersion: cosmosdb.azure.m.upbound.io/v1beta1
     kind: Account
     name: sweep-env
-    required: true
 
   program: |
     # Identities the application and KEDA assume. Both are wave 0: everything

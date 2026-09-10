@@ -6,11 +6,27 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// Source declares an existing resource to read.
+// Source declares an existing resource this composition reads, or waits on.
 //
-// The source list is static and declarative on purpose: it is what the
-// permission precheck and the watch registration key off, so it can never be
-// derived from evaluation. A program cannot reach a resource not declared here.
+// Sources are resources; inputs are keys. A program reaches a source through
+// sources.<id> and gets the whole object, or None when it does not exist.
+//
+// Whether an absent source should block is the program's decision, written in
+// its body rather than declared here:
+//
+//	if not sources.database:
+//	    return wait("the database has not been created yet")
+//
+// which also expresses the thing a flag on this struct could not - gating that
+// depends on configuration:
+//
+//	if inputs.useSql and not sources.database:
+//	    return wait("SQL is enabled but the database is not there yet")
+//
+// The list itself is static and declarative, because it is what the permission
+// checks and the watch registration key off, and neither can wait for an
+// evaluation that needs the sources first. A program cannot reach a resource
+// not declared here.
 type Source struct {
 	// ID is the name this source is bound to inside the program, as
 	// sources.<id>. It must be a legal Starlark identifier.
@@ -35,14 +51,6 @@ type Source struct {
 	//
 	// +kubebuilder:validation:MinLength=1
 	Name string `json:"name"`
-
-	// Required gates evaluation on this resource existing, even when the
-	// program never reads a field from it. Without this there is no way to
-	// express a pure ordering edge, because a dependency that is never
-	// referenced is invisible to any form of reference inference.
-	//
-	// +optional
-	Required bool `json:"required,omitempty"`
 
 	// Finalize places a finalizer on this resource so outputs derived from it
 	// are torn down before it is allowed to disappear.

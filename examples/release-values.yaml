@@ -26,55 +26,49 @@ spec:
     apiVersion: managedidentity.azure.m.upbound.io/v1beta1
     kind: UserAssignedIdentity
     name: sweep-env-app
-    required: true
   - id: kedaIdentity
     apiVersion: managedidentity.azure.m.upbound.io/v1beta1
     kind: UserAssignedIdentity
     name: sweep-env-keda
-    required: true
   - id: vault
     apiVersion: keyvault.azure.m.upbound.io/v1beta1
     kind: Vault
     name: sweep-env
-    required: true
   - id: serviceBus
     apiVersion: servicebus.azure.m.upbound.io/v1beta1
     kind: ServiceBusNamespace
     name: sweep-env
-    required: true
   - id: sqlServer
     apiVersion: sql.azure.m.upbound.io/v1beta1
     kind: MSSQLServer
     name: sweep-env
-    required: true
 
-  # Asserted present, never read. The values document does not contain a single
-  # field from the database, but the application cannot start without it, so
+  # Waited on, never read. The values document does not contain a single field
+  # from the database, but the application cannot start without it, so
   # publishing the configuration before it exists would hand the app a config
-  # that points at nothing.
-  #
-  # This edge is invisible to any design that infers dependencies from
-  # expression references, because there is no expression to infer it from.
-  # required exists for exactly this.
+  # that points at nothing. The gate is in the program, where it is visible.
   - id: database
     apiVersion: sql.azure.m.upbound.io/v1beta1
     kind: MSSQLDatabase
     name: sweep-env
-    required: true
 
   - id: storage
     apiVersion: storage.azure.m.upbound.io/v1beta1
     kind: Account
     name: sweepenv
-    required: true
   - id: cosmos
     apiVersion: cosmosdb.azure.m.upbound.io/v1beta1
     kind: Account
     name: sweep-env
-    required: true
 
   program: |
     def compose(inputs, sources, observed):
+        # A pure ordering edge: nothing below reads a field off the database,
+        # but publishing configuration that points at a database which does not
+        # exist is worse than publishing nothing.
+        if not sources.database:
+            return wait("the MSSQLDatabase has not been created yet")
+
         # Every one of these is a require: the document is only meaningful when
         # it is complete, and half a values.yaml is worse than none. A single
         # unresolved field puts the whole Weave in Waiting, naming that field.

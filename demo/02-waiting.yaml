@@ -21,24 +21,25 @@ spec:
       apiVersion: v1
       kind: ConfigMap
       name: tenant
-      required: true
 
-    # Asserted present, never read. A pure ordering gate.
-    #
-    # No expression mentions this anywhere in the program, so any design that
-    # infers dependencies from references would drop the edge silently. That is
-    # what `required` exists for. Create the ConfigMap above and this one still
-    # holds the Weave until `licence` exists too:
+    # Waited on, never read. A pure ordering gate, written in the program
+    # below rather than declared as a flag - which is also what lets it be
+    # conditional. Create the ConfigMap above and this one still holds the
+    # Weave until `licence` exists too:
     #
     #   kubectl -n weft-demo create configmap licence --from-literal=ok=true
     - id: licence
       apiVersion: v1
       kind: ConfigMap
       name: licence
-      required: true
 
   program: |
     def compose(inputs, sources, observed):
+        # The ordering gate. Nothing below reads a field off it; its existence
+        # is the whole requirement.
+        if not sources.licence:
+            return wait("no licence ConfigMap in this namespace yet")
+
         return {
             "greeting": {
                 "apiVersion": "v1",

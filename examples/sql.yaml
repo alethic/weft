@@ -35,13 +35,11 @@ spec:
     apiVersion: azure.m.upbound.io/v1beta1
     kind: ResourceGroup
     name: sweep-env
-    required: true
 
   - id: appIdentity
     apiVersion: managedidentity.azure.m.upbound.io/v1beta1
     kind: UserAssignedIdentity
     name: sweep-env-app
-    required: true
 
   program: |
     def compose(inputs, sources, observed):

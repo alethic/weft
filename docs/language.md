@@ -13,7 +13,7 @@ def compose(inputs, sources, observed):
 | argument | is |
 |---|---|
 | `inputs` | `spec.inputs`, assembled from its layers into one mapping. |
-| `sources` | declared sources by id, resolved through an impersonated read. A source that does not exist is `None`. |
+| `sources` | declared sources by id, resolved through an impersonated read. A source that does not exist is `None`, and whether that should block is the program's decision. |
 | `observed` | resources this Weave previously created, keyed by inventory key, read back live with current status. |
 
 The return value is a mapping of **stable key** to resource. The key is the
@@ -32,6 +32,27 @@ return wait("...")    # cannot proceed at all yet, and here is why
 
 `fail("...")` reports a permanent error and lands on the `Degraded` condition
 with a backtrace.
+
+### Gating on a source
+
+A source that does not exist resolves to `None`, so an ordering edge — a
+resource that must exist before anything is created, even though no field is
+ever read off it — is an ordinary line in the program:
+
+```python
+if not sources.database:
+    return wait("the database has not been created yet")
+```
+
+There is no `required` flag on a source, because the flag could only ever say
+"always". Written here the gate can say something a flag could not:
+
+```python
+if inputs.useSql and not sources.database:
+    return wait("SQL is enabled but the database is not there yet")
+```
+
+Turning `useSql` off releases the Weave without touching the source list.
 
 ### `pending(reason)`
 
@@ -253,8 +274,6 @@ Two phases and a fan-out, which between them cover most of what compositions do:
 def compose(inputs, sources, observed):
     out = {}
 
-    # A required source with no field read is a pure ordering gate; it is
-    # declared in spec.sources with required: true and never appears here.
     rg_id = require(sources.resourceGroup, "status.atProvider.id")
 
     out["identity"] = {

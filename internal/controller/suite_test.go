@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -256,10 +257,8 @@ func requireCondition(t *testing.T, w *v1alpha1.Weave, condType string, status m
 	return c
 }
 
-func configMapSource(id, name string, required bool) v1alpha1.Source {
-	return v1alpha1.Source{
-		ID: id, APIVersion: "v1", Kind: "ConfigMap", Name: name, Required: required,
-	}
+func configMapSource(id, name string) v1alpha1.Source {
+	return v1alpha1.Source{ID: id, APIVersion: "v1", Kind: "ConfigMap", Name: name}
 }
 
 // The ordinary path: a source resolves, resources are applied, the Weave is
@@ -278,7 +277,7 @@ def compose(inputs, sources, observed):
             "data": {"tenantId": require(sources.tenant, "data.tenantId")},
         },
     }
-`, []v1alpha1.Source{configMapSource("tenant", "tenant", true)}, "")
+`, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
 
 	h.settle("app", 2)
 
@@ -321,7 +320,7 @@ def compose(inputs, sources, observed):
             "data": {"tenantId": require(sources.tenant, "data.tenantId")},
         },
     }
-`, []v1alpha1.Source{configMapSource("tenant", "tenant", true)}, "")
+`, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
 
 	h.settle("app", 3)
 	before := h.weave("app").ResourceVersion
@@ -361,7 +360,7 @@ def compose(inputs, sources, observed):
         "data": {"principalId": uid},
     }
     return out
-`, []v1alpha1.Source{configMapSource("tenant", "tenant", true)}, "")
+`, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
 
 	// First pass: only the identity, and the Weave says why it is not finished.
 	h.reconcile("app")
@@ -394,24 +393,30 @@ def compose(inputs, sources, observed):
 	requireCondition(t, h.weave("app"), naming.ConditionReady, metav1.ConditionTrue)
 }
 
-// A required source that does not exist gates everything, even though the
-// program never reads a field from it.
-func TestRequiredSourceGatesWithoutBeingRead(t *testing.T) {
+// A source that does not exist gates everything, even though the program never
+// reads a field from it - a pure ordering edge, written where the composition
+// can see it rather than declared as a flag.
+func TestSourceGateWithoutBeingRead(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("gated", `
 def compose(inputs, sources, observed):
+    if not sources.gate:
+        return wait("the gate ConfigMap has not been created yet")
     return {
         "out": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}},
     }
-`, []v1alpha1.Source{configMapSource("gate", "gate", true)}, "")
+`, []v1alpha1.Source{configMapSource("gate", "gate")}, "")
 
 	h.reconcile("gated")
 	w := h.weave("gated")
 
 	c := requireCondition(t, w, naming.ConditionWaiting, metav1.ConditionTrue)
-	if c.Reason != ReasonSourceMissing {
-		t.Errorf("reason = %q, want %q", c.Reason, ReasonSourceMissing)
+	if c.Reason != ReasonFieldUnresolved {
+		t.Errorf("reason = %q, want %q", c.Reason, ReasonFieldUnresolved)
+	}
+	if !strings.Contains(c.Message, "gate ConfigMap") {
+		t.Errorf("the reason the program gave should reach the condition: %q", c.Message)
 	}
 	if h.exists("out") {
 		t.Fatal("nothing should be created while a required source is missing")
@@ -446,7 +451,7 @@ def compose(inputs, sources, observed):
         out["extra"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}}
     return out
 `
-	h.create("pruner", program, []v1alpha1.Source{configMapSource("tenant", "tenant", true)}, "")
+	h.create("pruner", program, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
 	h.settle("pruner", 2)
 
 	if !h.exists("extra") {
@@ -521,7 +526,7 @@ def compose(inputs, sources, observed):
         out["extra"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}}
     return out
 `
-	h.create("flapper", program, []v1alpha1.Source{configMapSource("tenant", "tenant", true)}, "")
+	h.create("flapper", program, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
 	h.settle("flapper", 2)
 
 	cm, _ := h.getConfigMap("tenant")

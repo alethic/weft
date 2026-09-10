@@ -30,7 +30,6 @@ spec:
       apiVersion: v1
       kind: ConfigMap
       name: upstream
-      required: true
       finalize: true
   program: |
     def compose(inputs, sources, observed):

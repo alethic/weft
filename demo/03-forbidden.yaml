@@ -21,7 +21,6 @@ spec:
       apiVersion: v1
       kind: ConfigMap
       name: platform
-      required: true
   program: |
     def compose(inputs, sources, observed):
         return {
