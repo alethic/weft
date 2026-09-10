@@ -1,0 +1,52 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: weft-controller
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resourceNames:
+  - system:authenticated
+  - system:serviceaccounts
+  resources:
+  - groups
+  verbs:
+  - impersonate
+- apiGroups:
+  - ""
+  resources:
+  - serviceaccounts
+  verbs:
+  - impersonate
+- apiGroups:
+  - weft.run
+  resources:
+  - weaves
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - weft.run
+  resources:
+  - weaves/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - weft.run
+  resources:
+  - weaves/status
+  verbs:
+  - get
+  - patch
+  - update
