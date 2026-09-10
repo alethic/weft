@@ -21,52 +21,21 @@ spec:
         prefix: sweep-env
         targetConfigMap: sweep-env-values
 
-  sources:
-  - id: appIdentity
-    apiVersion: managedidentity.azure.m.upbound.io/v1beta1
-    kind: UserAssignedIdentity
-    name: sweep-env-app
-  - id: kedaIdentity
-    apiVersion: managedidentity.azure.m.upbound.io/v1beta1
-    kind: UserAssignedIdentity
-    name: sweep-env-keda
-  - id: vault
-    apiVersion: keyvault.azure.m.upbound.io/v1beta1
-    kind: Vault
-    name: sweep-env
-  - id: serviceBus
-    apiVersion: servicebus.azure.m.upbound.io/v1beta1
-    kind: ServiceBusNamespace
-    name: sweep-env
-  - id: sqlServer
-    apiVersion: sql.azure.m.upbound.io/v1beta1
-    kind: MSSQLServer
-    name: sweep-env
-
-  # Waited on, never read. The values document does not contain a single field
-  # from the database, but the application cannot start without it, so
-  # publishing the configuration before it exists would hand the app a config
-  # that points at nothing. The gate is in the program, where it is visible.
-  - id: database
-    apiVersion: sql.azure.m.upbound.io/v1beta1
-    kind: MSSQLDatabase
-    name: sweep-env
-
-  - id: storage
-    apiVersion: storage.azure.m.upbound.io/v1beta1
-    kind: Account
-    name: sweepenv
-  - id: cosmos
-    apiVersion: cosmosdb.azure.m.upbound.io/v1beta1
-    kind: Account
-    name: sweep-env
 
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
+        appIdentity = read("managedidentity.azure.m.upbound.io/v1beta1", "UserAssignedIdentity", "sweep-env-app")
+        kedaIdentity = read("managedidentity.azure.m.upbound.io/v1beta1", "UserAssignedIdentity", "sweep-env-keda")
+        vault = read("keyvault.azure.m.upbound.io/v1beta1", "Vault", "sweep-env")
+        serviceBus = read("servicebus.azure.m.upbound.io/v1beta1", "ServiceBusNamespace", "sweep-env")
+        sqlServer = read("sql.azure.m.upbound.io/v1beta1", "MSSQLServer", "sweep-env")
+        database = read("sql.azure.m.upbound.io/v1beta1", "MSSQLDatabase", "sweep-env")
+        storage = read("storage.azure.m.upbound.io/v1beta1", "Account", "sweepenv")
+        cosmos = read("cosmosdb.azure.m.upbound.io/v1beta1", "Account", "sweep-env")
         # A pure ordering edge: nothing below reads a field off the database,
         # but publishing configuration that points at a database which does not
         # exist is worse than publishing nothing.
-        if not sources.database:
+        if not database:
             return wait("the MSSQLDatabase has not been created yet")
 
         # Every one of these is a require: the document is only meaningful when
@@ -74,32 +43,32 @@ spec:
         # unresolved field puts the whole Weave in Waiting, naming that field.
         values = {
             "identity": {
-                "clientId": require(sources.appIdentity, "status.atProvider.clientId"),
-                "principalId": require(sources.appIdentity, "status.atProvider.principalId"),
+                "clientId": require(appIdentity, "status.atProvider.clientId"),
+                "principalId": require(appIdentity, "status.atProvider.principalId"),
             },
             "keda": {
-                "clientId": require(sources.kedaIdentity, "status.atProvider.clientId"),
+                "clientId": require(kedaIdentity, "status.atProvider.clientId"),
             },
             "keyVault": {
-                "uri": require(sources.vault, "status.atProvider.vaultUri"),
+                "uri": require(vault, "status.atProvider.vaultUri"),
             },
             "serviceBus": {
-                "endpoint": require(sources.serviceBus, "status.atProvider.endpoint"),
+                "endpoint": require(serviceBus, "status.atProvider.endpoint"),
                 # A map index with no schema, written back asynchronously by the
                 # provider. Treated exactly like a missing status field: not an
                 # error, just not yet.
-                "namespace": require(sources.serviceBus,
+                "namespace": require(serviceBus,
                     'metadata.annotations["crossplane.io/external-name"]'),
             },
             "sql": {
-                "fqdn": require(sources.sqlServer, "status.atProvider.fullyQualifiedDomainName"),
+                "fqdn": require(sqlServer, "status.atProvider.fullyQualifiedDomainName"),
             },
             "storage": {
-                "account": require(sources.storage,
+                "account": require(storage,
                     'metadata.annotations["crossplane.io/external-name"]'),
             },
             "cosmos": {
-                "endpoint": require(sources.cosmos, "status.atProvider.endpoint"),
+                "endpoint": require(cosmos, "status.atProvider.endpoint"),
             },
         }
 

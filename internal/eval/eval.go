@@ -1,9 +1,9 @@
 // Package eval evaluates a composition program.
 //
-// The evaluator is deliberately a pure function over three JSON-shaped blobs.
-// It never touches a cluster, holds no client, and knows nothing about
-// Kubernetes beyond the shape of a resource. That keeps the interesting half of
-// the system testable without a cluster, and leaves the language replaceable.
+// The evaluator holds no client and knows nothing about Kubernetes beyond the
+// shape of a resource. Reads a program makes go out through a Reader the caller
+// supplies, so the interesting half of the system stays testable against a map
+// and the language stays replaceable.
 package eval
 
 import (
@@ -13,16 +13,15 @@ import (
 
 // Request is one evaluation.
 type Request struct {
-	// Program is the Starlark source defining compose(variable, sources, observed).
+	// Program is the Starlark source defining compose(variable, observed).
 	Program string
 
-	// Variables is static configuration from spec.variable.
+	// Variables is static configuration from spec.variables.
 	Variables map[string]any
 
-	// Sources maps declared source id to the resolved object, or nil when the
-	// resource does not exist. A source that could not be *read* never reaches
-	// here: an unreadable source is a permission failure, not an absence.
-	Sources map[string]any
+	// Reader resolves the resources a program reads. Nil means a program that
+	// calls read() fails, which is what the pure unit tests want.
+	Reader Reader
 
 	// Observed maps inventory key to the live object this Weave previously
 	// created, including current status. Self-reference through this map is how
@@ -87,6 +86,7 @@ const (
 	ReasonLoadNotAllowed  = "ProgramLoadNotAllowed"
 	ReasonOutputTooLarge  = "ProgramOutputTooLarge"
 	ReasonInvalidArgument = "ProgramInvalidArgument"
+	ReasonReadNotAllowed  = "ProgramReadNotAllowed"
 )
 
 // ProgramError is a fault in the program itself: it will not resolve on its own
@@ -110,6 +110,31 @@ func (e *ProgramError) Error() string {
 
 func programErrorf(reason, format string, args ...any) *ProgramError {
 	return &ProgramError{Reason: reason, Msg: fmt.Sprintf(format, args...)}
+}
+
+// Reader resolves a resource a program asked for by name.
+//
+// There is no list, no label selector and no cross-namespace form. A program
+// names what it wants, which is what makes the set of things it depends on
+// recoverable afterwards: the caller records the calls and that recording is
+// the watch set.
+type Reader interface {
+	// Read returns the object, or nil when it does not exist. Absence is a
+	// value; a failure to read is an error and aborts the evaluation.
+	//
+	// Finalize asks the caller to hold the resource against deletion until this
+	// composition's outputs are torn down. It is a request recorded for the
+	// caller to act on after evaluation, not a write performed during it.
+	Read(ctx context.Context, apiVersion, kind, name string, finalize bool) (map[string]any, error)
+
+	// Select returns every object of this kind matching the labels, in any
+	// order. An empty selector matches everything of that kind in the
+	// namespace.
+	//
+	// There is no finalize form. Holding a set against deletion means holding
+	// membership that changes underneath the hold, and a composition that needs
+	// ordering against one specific object can read it by name.
+	Select(ctx context.Context, apiVersion, kind string, labels map[string]string) ([]map[string]any, error)
 }
 
 // Evaluator turns a Request into a Result.

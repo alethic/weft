@@ -30,22 +30,14 @@ spec:
         - name: app
           identity: sweep-env-app
 
-  sources:
-  - id: resourceGroup
-    apiVersion: azure.m.upbound.io/v1beta1
-    kind: ResourceGroup
-    name: sweep-env
-
-  - id: appIdentity
-    apiVersion: managedidentity.azure.m.upbound.io/v1beta1
-    kind: UserAssignedIdentity
-    name: sweep-env-app
 
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
+        resourceGroup = read("azure.m.upbound.io/v1beta1", "ResourceGroup", "sweep-env")
+        appIdentity = read("managedidentity.azure.m.upbound.io/v1beta1", "UserAssignedIdentity", "sweep-env-app")
         out = {}
 
-        rg_id = require(sources.resourceGroup, "status.atProvider.id")
+        rg_id = require(resourceGroup, "status.atProvider.id")
         admin_name = variable.resourceName + "-sqladmin"
 
         # Wave 0: the identity the SQL server runs its AAD admin as.
@@ -122,7 +114,7 @@ spec:
             # the identity changes and stay put when it does not. The original
             # had no way to express that, so it re-ran every five minutes
             # forever instead.
-            generation = get(sources.appIdentity, "metadata.generation", 0)
+            generation = get(appIdentity, "metadata.generation", 0)
 
             script = "\n".join([
                 "CREATE USER [" + user.identity + "] FROM EXTERNAL PROVIDER;",

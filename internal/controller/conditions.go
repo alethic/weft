@@ -12,7 +12,7 @@ import (
 // shows in the Waiting column of kubectl get and what a person greps for.
 const (
 	ReasonApplied          = "Applied"
-	ReasonSourceDeleting   = "SourceDeleting"
+	ReasonHeldDeleting     = "HeldResourceDeleting"
 	ReasonFieldUnresolved  = "FieldUnresolved"
 	ReasonProgramWaiting   = "ProgramWaiting"
 	ReasonKindNotInstalled = "KindNotInstalled"

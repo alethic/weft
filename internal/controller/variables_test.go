@@ -15,7 +15,7 @@ import (
 // echo returns every input back out as a ConfigMap, so a test can read what the
 // program actually saw.
 const echoVariables = `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     data = {}
     for k in variable:
         v = variable[k]

@@ -83,27 +83,27 @@ func runReap(args []string) error {
 	fmt.Printf("%s %d finalizers across %d Weaves\n", verb, released, len(list.Items))
 	fmt.Printf("\nAnything Weft missed carries a finalizer starting %q and can be found with:\n"+
 		"  kubectl get <kind> -A -o json | jq -r '.items[] | select(.metadata.finalizers[]? | startswith(\"%s\")) | \"\\(.metadata.namespace)/\\(.metadata.name)\"'\n",
-		naming.SourceFinalizerPrefix, naming.SourceFinalizerPrefix)
+		naming.HeldFinalizerPrefix, naming.HeldFinalizerPrefix)
 	return nil
 }
 
 func reapWeave(ctx context.Context, c client.Client, factory *kube.Factory, w *v1alpha1.Weave, dryRun, includeWeave bool) (int, error) {
 	released := 0
-	want := naming.SourceFinalizer(w.Namespace, w.Name)
+	want := naming.HeldFinalizer(w.Namespace, w.Name)
 
 	var impersonated *kube.Client
-	for _, src := range w.Spec.Sources {
-		if !src.Finalize {
-			continue
-		}
-		gv, err := schema.ParseGroupVersion(src.APIVersion)
+	// status.held is the record of what this Weave actually placed. There is no
+	// declaration to consult any more: the request lived in the program, and a
+	// program that will not run again is precisely the case this command is for.
+	for _, held := range w.Status.Held {
+		gv, err := schema.ParseGroupVersion(held.APIVersion)
 		if err != nil {
 			continue
 		}
-		gvk := gv.WithKind(src.Kind)
+		gvk := gv.WithKind(held.Kind)
 
 		if dryRun {
-			fmt.Printf("  %s/%s: would release %s from %s %q\n", w.Namespace, w.Name, want, gvk.Kind, src.Name)
+			fmt.Printf("  %s/%s: would release %s from %s %q\n", w.Namespace, w.Name, want, gvk.Kind, held.Name)
 			released++
 			continue
 		}
@@ -114,7 +114,7 @@ func reapWeave(ctx context.Context, c client.Client, factory *kube.Factory, w *v
 				return released, err
 			}
 		}
-		changed, err := impersonated.MutateFinalizers(ctx, gvk, src.Name, func(current []string) ([]string, bool) {
+		changed, err := impersonated.MutateFinalizers(ctx, gvk, held.Name, func(current []string) ([]string, bool) {
 			out := make([]string, 0, len(current))
 			for _, f := range current {
 				if f != want {
@@ -128,11 +128,11 @@ func reapWeave(ctx context.Context, c client.Client, factory *kube.Factory, w *v
 		case apierrors.IsNotFound(err):
 			continue
 		default:
-			fmt.Fprintf(os.Stderr, "  %s/%s: releasing from %s %q: %v\n", w.Namespace, w.Name, gvk.Kind, src.Name, err)
+			fmt.Fprintf(os.Stderr, "  %s/%s: releasing from %s %q: %v\n", w.Namespace, w.Name, gvk.Kind, held.Name, err)
 			continue
 		}
 		if changed {
-			fmt.Printf("  %s/%s: released %s from %s %q\n", w.Namespace, w.Name, want, gvk.Kind, src.Name)
+			fmt.Printf("  %s/%s: released %s from %s %q\n", w.Namespace, w.Name, want, gvk.Kind, held.Name)
 			released++
 		}
 	}

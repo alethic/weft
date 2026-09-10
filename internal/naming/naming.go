@@ -38,32 +38,32 @@ const (
 	// sourceFinalizerPrefix begins every finalizer Weft places on a resource
 	// it does not own. Fixed so a human can enumerate and strip them:
 	//   kubectl get <kind> -o json | jq '.items[].metadata.finalizers'
-	sourceFinalizerPath = "src-"
+	heldFinalizerPath = "held-"
 )
 
 // WeaveFinalizer is the finalizer Weft places on Weave objects.
 var WeaveFinalizer = Group + "/" + weaveFinalizerPath
 
-// SourceFinalizerPrefix is the common prefix of every source finalizer. Used
+// HeldFinalizerPrefix is the common prefix of every finalizer Weft places on a resource a program holds. Used
 // both to recognise our own finalizers during reaping and to document how to
 // strip them by hand.
-var SourceFinalizerPrefix = Group + "/" + sourceFinalizerPath
+var HeldFinalizerPrefix = Group + "/" + heldFinalizerPath
 
-// SourceFinalizer returns the finalizer a given Weave places on a source it has
+// HeldFinalizer returns the finalizer a given Weave places on a resource it has
 // asked to finalize.
 //
 // A finalizer is a qualified name: the part after the slash is limited to 63
 // characters and a restricted alphabet, so the Weave's namespace and name are
 // hashed rather than interpolated. The prefix stays literal so the finalizer is
 // still recognisable and greppable.
-func SourceFinalizer(namespace, name string) string {
+func HeldFinalizer(namespace, name string) string {
 	sum := sha256.Sum256([]byte(namespace + "/" + name))
-	return SourceFinalizerPrefix + hex.EncodeToString(sum[:])[:16]
+	return HeldFinalizerPrefix + hex.EncodeToString(sum[:])[:16]
 }
 
-// IsSourceFinalizer reports whether a finalizer string was placed by Weft.
-func IsSourceFinalizer(f string) bool {
-	return len(f) > len(SourceFinalizerPrefix) && f[:len(SourceFinalizerPrefix)] == SourceFinalizerPrefix
+// IsHeldFinalizer reports whether a finalizer string was placed by Weft.
+func IsHeldFinalizer(f string) bool {
+	return len(f) > len(HeldFinalizerPrefix) && f[:len(HeldFinalizerPrefix)] == HeldFinalizerPrefix
 }
 
 // Label and annotation keys stamped onto every resource Weft creates.

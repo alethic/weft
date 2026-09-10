@@ -132,7 +132,7 @@ controller:
 | `controller.impersonateGroups` | `[system:serviceaccounts, system:authenticated]` | Impersonating the username alone yields an identity weaker than the real ServiceAccount, so RBAC bound to `system:authenticated` would silently not apply. |
 | `controller.pruneDelay` | `2m` | How long a resource must be continuously absent before deletion. Raise it above your provider's restart time. |
 | `controller.pruneThreshold` | `3` | Successful evaluations it must also be absent from. |
-| `controller.sourceFinalizerTimeout` | `10m` | How long a finalizer on somebody else's object may block it. |
+| `controller.holdTimeout` | `10m` | How long a finalizer from `read(..., finalize=True)` may block somebody else's object. |
 | `controller.teardownTimeout` | `15m` | How long ordered teardown runs before cascading collection takes over. |
 | `controller.pollInterval` | `30s` | Requeue period when watches could not be established. |
 | `controller.backstopInterval` | `10m` | Requeue period in the normal case. |
@@ -140,6 +140,8 @@ controller:
 | `controller.evaluator.maxSteps` | `20000000` | Execution budget for one `compose()`. |
 | `controller.evaluator.maxResources` | `250` | |
 | `controller.evaluator.maxValues` | `250000` | |
+| `controller.evaluator.maxReads` | `100` | Distinct resources one evaluation may read. Each is also a watch. |
+| `controller.evaluator.maxSelected` | `500` | Objects one `select()` may match. |
 | `controller.evaluator.programCacheSize` | `128` | |
 | `controller.watches.resync` | `10m` | |
 | `controller.watches.lifetime` | `30m` | Bounds how long a revoked grant keeps being honoured, since authorisation is checked when a watch opens. |

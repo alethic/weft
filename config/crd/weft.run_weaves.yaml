@@ -56,7 +56,7 @@ spec:
               program:
                 description: |-
                   Program is a Starlark program defining
-                  compose(variable, sources, observed), returning a mapping of stable key to
+                  compose(variable, observed), returning a mapping of stable key to
                   resource. Keys are the inventory identity: renaming a key does not
                   rename anything, it deletes one resource and creates another.
                 minLength: 1
@@ -73,70 +73,6 @@ spec:
                 maxLength: 253
                 minLength: 1
                 type: string
-              sources:
-                description: Sources are the existing resources this composition reads.
-                items:
-                  description: "Source declares an existing resource this composition
-                    reads, or waits on.\n\nSources are resources; variables are keys.
-                    A program reaches a source through\nsources.<id> and gets the
-                    whole object, or None when it does not exist.\n\nWhether an absent
-                    source should block is the program's decision, written in\nits
-                    body rather than declared here:\n\n\tif not sources.database:\n\t
-                    \   return wait(\"the database has not been created yet\")\n\nwhich
-                    also expresses the thing a flag on this struct could not - gating
-                    that\ndepends on configuration:\n\n\tif variable.useSql and not
-                    sources.database:\n\t    return wait(\"SQL is enabled but the
-                    database is not there yet\")\n\nThe list itself is static and
-                    declarative, because it is what the permission\nchecks and the
-                    watch registration key off, and neither can wait for an\nevaluation
-                    that needs the sources first. A program cannot reach a resource\nnot
-                    declared here."
-                  properties:
-                    apiVersion:
-                      description: |-
-                        APIVersion of the resource to read, e.g. "azure.m.upbound.io/v1beta1",
-                        or "v1" for core types.
-                      minLength: 1
-                      type: string
-                    finalize:
-                      description: |-
-                        Finalize places a finalizer on this resource so outputs derived from it
-                        are torn down before it is allowed to disappear.
-
-                        This requires update permission on the resource under the Weave's
-                        ServiceAccount. Missing permission surfaces as Degraded rather than
-                        silently doing nothing. The finalizer is released after the configured
-                        timeout regardless of teardown progress: blocking somebody else's
-                        object, and their namespace deletion, forever is worse than an ordering
-                        violation.
-                      type: boolean
-                    id:
-                      description: |-
-                        ID is the name this source is bound to inside the program, as
-                        sources.<id>. It must be a legal Starlark identifier.
-                      maxLength: 63
-                      pattern: ^[A-Za-z_][A-Za-z0-9_]*$
-                      type: string
-                    kind:
-                      description: Kind of the resource to read.
-                      minLength: 1
-                      type: string
-                    name:
-                      description: |-
-                        Name of the resource to read. Always in the Weave's own namespace;
-                        cross-namespace reads are not expressible.
-                      minLength: 1
-                      type: string
-                  required:
-                  - apiVersion
-                  - id
-                  - kind
-                  - name
-                  type: object
-                type: array
-                x-kubernetes-list-map-keys:
-                - id
-                x-kubernetes-list-type: map
               variables:
                 description: |-
                   Variables is static configuration, assembled from these entries and
@@ -308,6 +244,41 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              held:
+                description: Held records the resources this Weave has placed a finalizer
+                  on.
+                items:
+                  description: |-
+                    HeldResource is a resource this Weave has placed a finalizer on, because a
+                    program read it with finalize=True.
+
+                    It is recorded rather than derived because the request lives in the program,
+                    and a program that stops asking - or stops running at all - must still leave
+                    something behind that says what to release.
+                  properties:
+                    apiVersion:
+                      description: APIVersion of the held resource.
+                      type: string
+                    kind:
+                      description: Kind of the held resource.
+                      type: string
+                    name:
+                      description: Name of the held resource, in the Weave's own namespace.
+                      type: string
+                    teardownStartedAt:
+                      description: |-
+                        TeardownStartedAt is set when a held resource began deleting. It starts
+                        the clock on the hard timeout after which the finalizer is released
+                        regardless of teardown progress.
+                      format: date-time
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
               inventory:
                 description: |-
                   Inventory is every resource this Weave currently owns, with its apply
@@ -383,36 +354,31 @@ spec:
                   evaluated.
                 format: int64
                 type: integer
-              sources:
-                description: Sources carries per-source bookkeeping for finalized
-                  sources.
+              reads:
+                description: |-
+                  Reads records the kinds this composition read on its last successful
+                  pass. It is the watch set: a program that reads a ResourceGroup has to
+                  be woken when one changes, and the only record of that is what it
+                  actually asked for.
+
+                  Kept across restarts so a Weave that is waiting still has its watches
+                  re-established without having to evaluate first.
                 items:
-                  description: |-
-                    SourceStatus tracks per-source state that has to survive a controller
-                    restart.
+                  description: ReadRef identifies one resource a program read, or
+                    one selection it made.
                   properties:
-                    finalized:
-                      description: |-
-                        Finalized is true once Weft has successfully placed its finalizer on
-                        the source.
-                      type: boolean
-                    id:
-                      description: ID matches the declared source.
+                    apiVersion:
+                      description: APIVersion of what was read.
                       type: string
-                    teardownStartedAt:
-                      description: |-
-                        TeardownStartedAt is set when a finalized source began deleting. It
-                        starts the clock on the hard timeout after which the finalizer is
-                        released regardless of teardown progress.
-                      format: date-time
+                    kind:
+                      description: Kind of what was read.
                       type: string
                   required:
-                  - id
+                  - apiVersion
+                  - kind
                   type: object
                 type: array
-                x-kubernetes-list-map-keys:
-                - id
-                x-kubernetes-list-type: map
+                x-kubernetes-list-type: atomic
               superseded:
                 description: |-
                   Superseded are objects this Weave created and no longer describes, which

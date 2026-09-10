@@ -134,7 +134,7 @@ parser rejects and the container crash-loops on.
 - --impersonate-groups={{ include "weft.impersonateGroups" . }}
 - --prune-delay={{ $c.pruneDelay }}
 - --prune-threshold={{ int $c.pruneThreshold }}
-- --source-finalizer-timeout={{ $c.sourceFinalizerTimeout }}
+- --hold-timeout={{ $c.holdTimeout }}
 - --teardown-timeout={{ $c.teardownTimeout }}
 - --poll-interval={{ $c.pollInterval }}
 - --backstop-interval={{ $c.backstopInterval }}
@@ -142,6 +142,8 @@ parser rejects and the container crash-loops on.
 - --max-steps={{ int64 $c.evaluator.maxSteps }}
 - --max-resources={{ int $c.evaluator.maxResources }}
 - --max-values={{ int $c.evaluator.maxValues }}
+- --max-reads={{ int $c.evaluator.maxReads }}
+- --max-selected={{ int $c.evaluator.maxSelected }}
 - --program-cache-size={{ int $c.evaluator.programCacheSize }}
 - --watch-resync={{ $c.watches.resync }}
 - --watch-lifetime={{ $c.watches.lifetime }}

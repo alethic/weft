@@ -80,7 +80,7 @@
         },
         "pruneDelay": { "$ref": "#/definitions/duration" },
         "pruneThreshold": { "type": "integer", "minimum": 1 },
-        "sourceFinalizerTimeout": { "$ref": "#/definitions/duration" },
+        "holdTimeout": { "$ref": "#/definitions/duration" },
         "teardownTimeout": { "$ref": "#/definitions/duration" },
         "pollInterval": { "$ref": "#/definitions/duration" },
         "backstopInterval": { "$ref": "#/definitions/duration" },
@@ -91,6 +91,8 @@
             "maxSteps": { "type": "integer", "minimum": 1000 },
             "maxResources": { "type": "integer", "minimum": 1 },
             "maxValues": { "type": "integer", "minimum": 1 },
+            "maxReads": { "type": "integer", "minimum": 1 },
+            "maxSelected": { "type": "integer", "minimum": 1 },
             "programCacheSize": { "type": "integer", "minimum": 1 }
           }
         },

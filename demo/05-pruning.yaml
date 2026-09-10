@@ -30,7 +30,7 @@ spec:
           - westeurope
           - southeastasia
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
         out = {}
         for region in variable.regions:
             out["region-" + region] = {

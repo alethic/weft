@@ -60,23 +60,6 @@ spec:
           scope: serviceBus
           principal: keda
 
-  sources:
-  # The resource group's provider id is the scope for most assignments and the
-  # prefix of every external-name below, so nothing can be built without it.
-  - id: resourceGroup
-    apiVersion: azure.m.upbound.io/v1beta1
-    kind: ResourceGroup
-    name: sweep-env
-
-  - id: serviceBus
-    apiVersion: servicebus.azure.m.upbound.io/v1beta1
-    kind: ServiceBusNamespace
-    name: sweep-env
-
-  - id: cosmos
-    apiVersion: cosmosdb.azure.m.upbound.io/v1beta1
-    kind: Account
-    name: sweep-env
 
   program: |
     # Identities the application and KEDA assume. Both are wave 0: everything
@@ -109,10 +92,16 @@ spec:
             },
         }
 
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
+
+        resourceGroup = read("azure.m.upbound.io/v1beta1", "ResourceGroup", "sweep-env")
+
+        serviceBus = read("servicebus.azure.m.upbound.io/v1beta1", "ServiceBusNamespace", "sweep-env")
+
+        cosmos = read("cosmosdb.azure.m.upbound.io/v1beta1", "Account", "sweep-env")
         out = {}
 
-        rg_id = require(sources.resourceGroup, "status.atProvider.id")
+        rg_id = require(resourceGroup, "status.atProvider.id")
 
         for suffix in IDENTITIES:
             out["identity-" + suffix] = identity(variable, rg_id, suffix)
@@ -130,8 +119,8 @@ spec:
 
         scopes = {
             "resourceGroup": rg_id,
-            "serviceBus": get(sources.serviceBus, "status.atProvider.id"),
-            "cosmos": get(sources.cosmos, "status.atProvider.id"),
+            "serviceBus": get(serviceBus, "status.atProvider.id"),
+            "cosmos": get(cosmos, "status.atProvider.id"),
         }
 
         for role in variable.roles:

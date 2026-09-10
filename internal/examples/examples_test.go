@@ -80,14 +80,10 @@ func TestDemoProgramsCompile(t *testing.T) {
 				t.Fatal("incomplete demo")
 			}
 
-			sources := map[string]any{}
-			for _, src := range w.Spec.Sources {
-				sources[src.ID] = resolvedSource(src)
-			}
 			_, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
 				Program:   w.Spec.Program,
 				Variables: variables.Inline(w.Spec.Variables),
-				Sources:   sources,
+				Reader:    present{},
 				Observed:  map[string]any{},
 			})
 			var pe *eval.ProgramError
@@ -118,16 +114,22 @@ func TestExamplesAreWellFormed(t *testing.T) {
 			if strings.TrimSpace(w.Spec.Program) == "" {
 				t.Error("no program")
 			}
-			for _, src := range w.Spec.Sources {
-				if src.ID == "" || src.APIVersion == "" || src.Kind == "" || src.Name == "" {
-					t.Errorf("source %+v is incomplete", src)
+			for i, v := range w.Spec.Variables {
+				set := 0
+				for _, present := range []bool{v.Values != nil, v.ConfigMap != nil, v.Secret != nil} {
+					if present {
+						set++
+					}
+				}
+				if set != 1 {
+					t.Errorf("variables[%d] sets %d of values, configMap and secret; exactly one is allowed", i, set)
 				}
 			}
 		})
 	}
 }
 
-// Evaluating with every source absent is the first state a Weave is ever in, so
+// Evaluating with the namespace empty is the first state a Weave is ever in, so
 // each example has to reach it without faulting. A wait is the expected answer;
 // a ProgramError is a broken example.
 func TestExamplesEvaluateAgainstNothing(t *testing.T) {
@@ -135,15 +137,10 @@ func TestExamplesEvaluateAgainstNothing(t *testing.T) {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			w := load(t, path)
 
-			sources := map[string]any{}
-			for _, src := range w.Spec.Sources {
-				sources[src.ID] = nil
-			}
-
 			res, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
 				Program:   w.Spec.Program,
 				Variables: variables.Inline(w.Spec.Variables),
-				Sources:   sources,
+				Reader:    absent{},
 				Observed:  map[string]any{},
 			})
 
@@ -155,7 +152,7 @@ func TestExamplesEvaluateAgainstNothing(t *testing.T) {
 				t.Fatalf("evaluate: %v", err)
 			}
 			if !res.Waiting() {
-				t.Errorf("with no sources present the example should be waiting, got %d resources",
+				t.Errorf("with nothing in the namespace the example should be waiting, got %d resources",
 					len(res.Resources))
 			}
 		})
@@ -170,15 +167,10 @@ func TestExamplesProduceTheirFirstWave(t *testing.T) {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			w := load(t, path)
 
-			sources := map[string]any{}
-			for _, src := range w.Spec.Sources {
-				sources[src.ID] = resolvedSource(src)
-			}
-
 			res, err := eval.NewStarlark(eval.Options{}).Evaluate(context.Background(), eval.Request{
 				Program:   w.Spec.Program,
 				Variables: variables.Inline(w.Spec.Variables),
-				Sources:   sources,
+				Reader:    present{},
 				Observed:  map[string]any{},
 			})
 			if err != nil {
@@ -219,32 +211,59 @@ func TestExamplesProduceTheirFirstWave(t *testing.T) {
 	}
 }
 
-// resolvedSource fabricates a source that exists and has reported the status
-// fields these compositions actually read. The set is small on purpose: five
-// shapes cover almost everything.
-func resolvedSource(src v1alpha1.Source) map[string]any {
+// present answers every read with a resource that exists and has reported the
+// status fields these compositions actually read. The set is small on purpose:
+// five shapes cover almost everything.
+//
+// There is no declared list to enumerate any more, so the fixture cannot know
+// in advance what a program will ask for. Answering everything is the honest
+// substitute: a composition that reads something these fields do not cover
+// fails here, which is the signal worth having.
+type present struct{}
+
+func (present) Read(_ context.Context, apiVersion, kind, name string, _ bool) (map[string]any, error) {
+	return fabricate(apiVersion, kind, name), nil
+}
+
+func (present) Select(_ context.Context, apiVersion, kind string, _ map[string]string) ([]map[string]any, error) {
+	return []map[string]any{fabricate(apiVersion, kind, "selected")}, nil
+}
+
+// absent answers every read with nothing, which is the state a Weave is in
+// before anything it depends on has been created.
+type absent struct{}
+
+func (absent) Read(context.Context, string, string, string, bool) (map[string]any, error) {
+	return nil, nil
+}
+
+func (absent) Select(context.Context, string, string, map[string]string) ([]map[string]any, error) {
+	return nil, nil
+}
+
+func fabricate(apiVersion, kind, name string) map[string]any {
 	return map[string]any{
-		"apiVersion": src.APIVersion,
-		"kind":       src.Kind,
+		"apiVersion": apiVersion,
+		"kind":       kind,
 		"metadata": map[string]any{
-			"name":       src.Name,
+			"name":       name,
 			"generation": int64(3),
 			"annotations": map[string]any{
-				"crossplane.io/external-name": src.Name,
+				"crossplane.io/external-name": name,
 			},
 		},
 		"data": map[string]any{
 			"tenantId": "00000000-0000-0000-0000-000000000000",
-			"id":       src.Name,
+			"id":       name,
 		},
 		"status": map[string]any{
 			"atProvider": map[string]any{
-				"id":                       "/subscriptions/sub/resourceGroups/" + src.Name,
+				"id":                       "/subscriptions/sub/resourceGroups/" + name,
 				"clientId":                 "11111111-1111-1111-1111-111111111111",
 				"principalId":              "22222222-2222-2222-2222-222222222222",
-				"vaultUri":                 "https://" + src.Name + ".vault.azure.net/",
-				"endpoint":                 "https://" + src.Name + ".example.net/",
-				"fullyQualifiedDomainName": src.Name + ".database.windows.net",
+				"vaultUri":                 "https://" + name + ".vault.azure.net/",
+				"endpoint":                 "https://" + name + ".example.net/",
+				"fullyQualifiedDomainName": name + ".database.windows.net",
 			},
 		},
 	}

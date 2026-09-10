@@ -98,8 +98,9 @@ func bindFlags(fs *flag.FlagSet, c *config) {
 		"How long a resource must have been continuously absent from successful evaluations before it is "+
 			"deleted. This is the half of the hysteresis that actually protects anything: reconciles are "+
 			"event-driven, so a count of them measures controller activity rather than elapsed time.")
-	fs.DurationVar(&c.opts.SourceFinalizerTimeout, "source-finalizer-timeout", d.SourceFinalizerTimeout,
-		"How long a finalizer placed on a source may block that source's deletion before it is released anyway.")
+	fs.DurationVar(&c.opts.HoldTimeout, "hold-timeout", d.HoldTimeout,
+		"How long a finalizer placed by read(..., finalize=True) may block that resource's deletion before it is "+
+			"released anyway.")
 	fs.DurationVar(&c.opts.TeardownTimeout, "teardown-timeout", d.TeardownTimeout,
 		"How long ordered teardown of a deleting Weave may run before the rest is handed to cascading collection.")
 	fs.DurationVar(&c.opts.PollInterval, "poll-interval", d.PollInterval,
@@ -113,6 +114,9 @@ func bindFlags(fs *flag.FlagSet, c *config) {
 	fs.Uint64Var(&c.evalOpt.MaxSteps, "max-steps", e.MaxSteps, "Execution budget for one call to compose().")
 	fs.IntVar(&c.evalOpt.MaxResources, "max-resources", e.MaxResources, "Most resources one evaluation may return.")
 	fs.IntVar(&c.evalOpt.MaxValues, "max-values", e.MaxValues, "Most values one evaluation's result may contain.")
+	fs.IntVar(&c.evalOpt.MaxReads, "max-reads", e.MaxReads,
+		"Most distinct resources one evaluation may read. Every read is also a watch the controller keeps alive.")
+	fs.IntVar(&c.evalOpt.MaxSelected, "max-selected", e.MaxSelected, "Most objects one select() may match.")
 	fs.IntVar(&c.evalOpt.CacheSize, "program-cache-size", e.CacheSize, "Compiled programs to retain.")
 
 	fs.DurationVar(&c.watch.Resync, "watch-resync", 10*time.Minute, "Informer resync period.")

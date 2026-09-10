@@ -39,12 +39,16 @@ func (e *errWaitRaised) Error() string { return e.reason }
 
 // builtins returns the predeclared environment for a program.
 //
-// Everything here is a pure function of its arguments. There is no clock, no
-// randomness, no I/O and no way to reach the process: an author is assumed to
-// be untrusted, so anything non-deterministic is also a way to make a
-// composition that behaves differently on each reconcile.
+// read() is the one impure entry, and the only one: there is no clock, no
+// randomness and no way to reach the process. An author is assumed to be
+// untrusted, so anything non-deterministic is also a way to make a composition
+// that behaves differently on each reconcile. A read is repeatable by
+// construction - it names one resource in one namespace and the caller answers
+// it from a cache for the duration of a pass.
 func builtins() starlark.StringDict {
 	return starlark.StringDict{
+		"read":      starlark.NewBuiltin("read", bRead),
+		"select":    starlark.NewBuiltin("select", bSelect),
 		"get":       starlark.NewBuiltin("get", bGet),
 		"has":       starlark.NewBuiltin("has", bHas),
 		"require":   starlark.NewBuiltin("require", bRequire),
@@ -144,13 +148,19 @@ func bRequire(t *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwar
 		return nil, raiseWait(t, fmt.Sprintf("%s is empty on %s", pathString(segs), subject))
 	}
 
-	if obj == nil || obj == starlark.None {
+	if obj == nil || obj == starlark.None || isAbsent(obj) {
 		return nil, raiseWait(t, fmt.Sprintf("%s does not exist yet (needed for %s)", subject, pathString(segs)))
 	}
 	// Name the link that actually failed rather than the whole path, so the
 	// condition points at the field that has not been written back.
 	missing := pathString(segs[:resolved+1])
 	return nil, raiseWait(t, fmt.Sprintf("%s is not set on %s", missing, subject))
+}
+
+// isAbsent reports whether a value is a read that found nothing.
+func isAbsent(v starlark.Value) bool {
+	_, ok := v.(*absentValue)
+	return ok
 }
 
 func raiseWait(t *starlark.Thread, reason string) error {
@@ -162,6 +172,9 @@ func raiseWait(t *starlark.Thread, reason string) error {
 func describe(v starlark.Value) string {
 	if v == nil || v == starlark.None {
 		return "the resource"
+	}
+	if a, ok := v.(*absentValue); ok {
+		return a.kind + "/" + a.name
 	}
 	o, ok := v.(*Object)
 	if !ok {

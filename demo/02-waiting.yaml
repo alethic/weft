@@ -16,28 +16,14 @@ metadata:
   namespace: weft-demo
 spec:
   serviceAccountName: composer
-  sources:
-    - id: tenant
-      apiVersion: v1
-      kind: ConfigMap
-      name: tenant
-
-    # Waited on, never read. A pure ordering gate, written in the program
-    # below rather than declared as a flag - which is also what lets it be
-    # conditional. Create the ConfigMap above and this one still holds the
-    # Weave until `licence` exists too:
-    #
-    #   kubectl -n weft-demo create configmap licence --from-literal=ok=true
-    - id: licence
-      apiVersion: v1
-      kind: ConfigMap
-      name: licence
 
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
+        tenant = read("v1", "ConfigMap", "tenant")
+        licence = read("v1", "ConfigMap", "licence")
         # The ordering gate. Nothing below reads a field off it; its existence
         # is the whole requirement.
-        if not sources.licence:
+        if not licence:
             return wait("no licence ConfigMap in this namespace yet")
 
         return {
@@ -46,11 +32,11 @@ spec:
                 "kind": "ConfigMap",
                 "metadata": {"name": "greeting"},
                 "data": {
-                    "tenant": require(sources.tenant, "data.tenantId"),
+                    "tenant": require(tenant, "data.tenantId"),
                     # A field that will never appear on a ConfigMap, reached
                     # with get() and a default rather than require(), so its
                     # absence is a value rather than a wait.
-                    "provisioned": get(sources.tenant, "status.atProvider.id", "not-a-managed-resource"),
+                    "provisioned": get(tenant, "status.atProvider.id", "not-a-managed-resource"),
                 },
             },
         }

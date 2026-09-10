@@ -25,19 +25,14 @@ metadata:
   namespace: weft-demo
 spec:
   serviceAccountName: composer
-  sources:
-    - id: upstream
-      apiVersion: v1
-      kind: ConfigMap
-      name: upstream
-      finalize: true
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
+        upstream = read("v1", "ConfigMap", "upstream", finalize=True)
         return {
             "derived": {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {"name": "derived-from-upstream"},
-                "data": {"upstreamId": require(sources.upstream, "data.id")},
+                "data": {"upstreamId": require(upstream, "data.id")},
             },
         }

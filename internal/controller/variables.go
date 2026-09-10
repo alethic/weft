@@ -3,19 +3,15 @@ package controller
 import (
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	yaml "sigs.k8s.io/yaml"
 
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/jsonutil"
-	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/variables"
-	"github.com/alethic/weft/internal/watches"
 )
 
 var (
@@ -32,11 +28,11 @@ var (
 //
 // Every read is impersonated, like every other read: a Weave can take
 // configuration only from objects its ServiceAccount could read directly.
-func (r *WeaveReconciler) resolveVariables(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (map[string]any, error) {
+func (r *WeaveReconciler) resolveVariables(ctx context.Context, rd *weaveReader, weave *v1alpha1.Weave) (map[string]any, error) {
 	out := map[string]any{}
 
 	for i, entry := range weave.Spec.Variables {
-		values, err := r.resolveVariable(ctx, c, entry, i)
+		values, err := r.resolveVariable(ctx, rd, entry, i)
 		if err != nil {
 			return nil, err
 		}
@@ -45,16 +41,16 @@ func (r *WeaveReconciler) resolveVariables(ctx context.Context, c *kube.Client, 
 	return out, nil
 }
 
-func (r *WeaveReconciler) resolveVariable(ctx context.Context, c *kube.Client, entry v1alpha1.Variable, index int) (map[string]any, error) {
+func (r *WeaveReconciler) resolveVariable(ctx context.Context, rd *weaveReader, entry v1alpha1.Variable, index int) (map[string]any, error) {
 	switch {
 	case entry.Values != nil:
 		return jsonutil.DecodeObject(entry.Values), nil
 
 	case entry.ConfigMap != nil:
-		return r.readVariableObject(ctx, c, configMapGVK, *entry.ConfigMap, index, false)
+		return r.readVariableObject(ctx, rd, configMapGVK, *entry.ConfigMap, index, false)
 
 	case entry.Secret != nil:
-		return r.readVariableObject(ctx, c, secretGVK, *entry.Secret, index, true)
+		return r.readVariableObject(ctx, rd, secretGVK, *entry.Secret, index, true)
 
 	default:
 		// The CRD's validation rule should have caught this at admission.
@@ -66,17 +62,19 @@ func (r *WeaveReconciler) resolveVariable(ctx context.Context, c *kube.Client, e
 // readVariableObject reads one ConfigMap or Secret and turns it into a mapping.
 func (r *WeaveReconciler) readVariableObject(
 	ctx context.Context,
-	c *kube.Client,
+	rd *weaveReader,
 	gvk schema.GroupVersionKind,
 	ref v1alpha1.VariableRef,
 	index int,
 	encoded bool,
 ) (map[string]any, error) {
-	obj, err := c.Get(ctx, gvk, ref.Name)
-	switch {
-	case err == nil:
-
-	case apierrors.IsNotFound(err):
+	// The same read a program would make, through the same reader: cached,
+	// recorded, and therefore watched.
+	obj, err := rd.readRaw(ctx, gvk, ref.Name)
+	if err != nil {
+		return nil, err
+	}
+	if obj == nil {
 		if ref.Optional {
 			return nil, nil
 		}
@@ -84,14 +82,6 @@ func (r *WeaveReconciler) readVariableObject(
 		// ready, and this is the ordinary shape of that: waiting, not failing.
 		return nil, waitingf(ReasonVariableMissing,
 			"variables[%d] needs %s %q, which does not exist", index, gvk.Kind, ref.Name)
-
-	default:
-		var perm *kube.PermissionError
-		if errors.As(err, &perm) {
-			return nil, degradedf(ReasonForbidden,
-				"reading variables[%d]:\n%s", index, perm.Error())
-		}
-		return nil, fmt.Errorf("reading variables[%d] (%s %q): %w", index, gvk.Kind, ref.Name, err)
 	}
 
 	data, err := inputData(obj, encoded)
@@ -151,33 +141,4 @@ func inputData(obj *unstructured.Unstructured, encoded bool) (map[string]string,
 		out[k] = string(decoded)
 	}
 	return out, nil
-}
-
-// variableWatchKeys returns the objects the variables read, so a change to one wakes
-// the Weave the same way a change to a source does.
-func variableWatchKeys(weave *v1alpha1.Weave) []watches.Key {
-	var keys []watches.Key
-	seen := map[schema.GroupVersionKind]bool{}
-
-	add := func(gvk schema.GroupVersionKind) {
-		if seen[gvk] {
-			return
-		}
-		seen[gvk] = true
-		keys = append(keys, watches.Key{
-			GVK:            gvk,
-			Namespace:      weave.Namespace,
-			ServiceAccount: weave.Spec.ServiceAccountName,
-		})
-	}
-
-	for _, entry := range weave.Spec.Variables {
-		switch {
-		case entry.ConfigMap != nil:
-			add(configMapGVK)
-		case entry.Secret != nil:
-			add(secretGVK)
-		}
-	}
-	return keys
 }

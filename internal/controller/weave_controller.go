@@ -49,9 +49,9 @@ type Options struct {
 	// them measures controller activity rather than elapsed time.
 	PruneDelay time.Duration
 
-	// SourceFinalizerTimeout bounds how long a finalizer placed on somebody
-	// else's object may block its deletion.
-	SourceFinalizerTimeout time.Duration
+	// HoldTimeout bounds how long a finalizer placed by read(..., finalize=True)
+	// on somebody else's object may block its deletion.
+	HoldTimeout time.Duration
 
 	// TeardownTimeout bounds ordered teardown of a deleting Weave before its
 	// finalizer is released and ordinary cascading collection takes over.
@@ -78,13 +78,13 @@ type Options struct {
 // DefaultOptions returns sensible tunables.
 func DefaultOptions() Options {
 	return Options{
-		PruneThreshold:         3,
-		PruneDelay:             2 * time.Minute,
-		SourceFinalizerTimeout: 10 * time.Minute,
-		TeardownTimeout:        15 * time.Minute,
-		PollInterval:           30 * time.Second,
-		Backstop:               10 * time.Minute,
-		DegradedRetry:          30 * time.Second,
+		PruneThreshold:  3,
+		PruneDelay:      2 * time.Minute,
+		HoldTimeout:     10 * time.Minute,
+		TeardownTimeout: 15 * time.Minute,
+		PollInterval:    30 * time.Second,
+		Backstop:        10 * time.Minute,
+		DegradedRetry:   30 * time.Second,
 	}
 }
 
@@ -96,8 +96,8 @@ func (o *Options) applyDefaults() {
 	if o.PruneDelay == 0 {
 		o.PruneDelay = d.PruneDelay
 	}
-	if o.SourceFinalizerTimeout == 0 {
-		o.SourceFinalizerTimeout = d.SourceFinalizerTimeout
+	if o.HoldTimeout == 0 {
+		o.HoldTimeout = d.HoldTimeout
 	}
 	if o.TeardownTimeout == 0 {
 		o.TeardownTimeout = d.TeardownTimeout
@@ -307,14 +307,13 @@ type pass struct {
 
 // compose runs one full pass.
 func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (pass, error) {
-	resolved, err := r.resolveSources(ctx, c, weave)
-	if err != nil {
-		return pass{}, err
-	}
+	// One reader for the whole pass. Every read the controller and the program
+	// make goes through it, so they share a cache and the recording covers both.
+	rd := newWeaveReader(c, weave)
 
-	// Finalizer handling runs before evaluation because a source that is going
-	// away means the answer is "tear down", not "recompute".
-	if err := r.reconcileSourceFinalizers(ctx, c, weave, resolved); err != nil {
+	// Hold handling runs before evaluation because a resource this Weave holds
+	// going away means the answer is "tear down", not "recompute".
+	if err := r.checkHolds(ctx, c, rd, weave); err != nil {
 		return pass{}, err
 	}
 
@@ -323,7 +322,12 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 		return pass{}, err
 	}
 
-	variables, err := r.resolveVariables(ctx, c, weave)
+	// spec.variables is a couple of implicit reads at the top of the program:
+	// the same client, the same cache, the same recording. The only thing it
+	// buys over reading a ConfigMap in the body is that the values arrive
+	// merged and a reader of the Weave can see where configuration comes from
+	// without reading the program.
+	variables, err := r.resolveVariables(ctx, rd, weave)
 	if err != nil {
 		return pass{}, err
 	}
@@ -332,7 +336,7 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 	res, err := r.Evaluator.Evaluate(ctx, eval.Request{
 		Program:   weave.Spec.Program,
 		Variables: variables,
-		Sources:   resolved.values,
+		Reader:    rd,
 		Observed:  observed,
 	})
 	metrics.EvaluationDuration.WithLabelValues(weave.Namespace, weave.Name).
@@ -343,6 +347,15 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 		if errors.As(err, &pe) {
 			return pass{}, degradedf(pe.Reason, "%s", programMessage(pe))
 		}
+		return pass{}, err
+	}
+
+	// Record the read set before anything else can end the pass. A Weave that
+	// waits still has to be woken by the thing it is waiting for, and the only
+	// record of what that is comes from the reads it just made.
+	weave.Status.Reads = rd.reads()
+
+	if err := r.reconcileHolds(ctx, c, weave, rd.requestedHolds(), rd.deleting); err != nil {
 		return pass{}, err
 	}
 
@@ -448,7 +461,7 @@ func (r *WeaveReconciler) reconcileDeletion(ctx context.Context, weave *v1alpha1
 		r.eventf(weave, "Normal", "Orphaned",
 			"left %d resources in place as requested; they are no longer managed by any Weave",
 			len(weave.Status.Inventory))
-		if err := r.releaseAllSourceFinalizers(ctx, c, weave); err != nil {
+		if err := r.releaseAllHolds(ctx, c, weave); err != nil {
 			log.Error(err, "releasing source finalizers")
 		}
 		return r.finishDeletion(ctx, weave, key)
@@ -491,7 +504,7 @@ func (r *WeaveReconciler) reconcileDeletion(ctx context.Context, weave *v1alpha1
 			r.Opts.TeardownTimeout, len(weave.Status.Inventory))
 	}
 
-	if err := r.releaseAllSourceFinalizers(ctx, c, weave); err != nil {
+	if err := r.releaseAllHolds(ctx, c, weave); err != nil {
 		var h *halt
 		if errors.As(err, &h) && h.kind == haltDegraded && !overdue {
 			before := weave.DeepCopy()

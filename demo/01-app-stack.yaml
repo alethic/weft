@@ -43,27 +43,21 @@ spec:
           - name: checkout
             enabled: true
 
-  sources:
-    # Somebody else's object. This Weave reads it only because its
-    # ServiceAccount was granted access to it.
-    - id: platform
-      apiVersion: v1
-      kind: ConfigMap
-      name: platform
 
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
+        platform = read("v1", "ConfigMap", "platform")
         out = {}
 
         # Nothing can be built without these, so require() rather than get():
         # a missing one puts the Weave in Waiting naming the exact field.
-        tenant = require(sources.platform, "data.tenantId")
-        region = get(sources.platform, "data.region", "unknown")
+        tenant = require(platform, "data.tenantId")
+        region = get(platform, "data.region", "unknown")
 
         # An annotation key, which is not an identifier and so cannot be
         # reached with attribute syntax. Written by whoever owns the platform
         # ConfigMap, so it may not be there yet.
-        cluster = get(sources.platform, 'metadata.annotations["platform.example/cluster"]', "unregistered")
+        cluster = get(platform, 'metadata.annotations["platform.example/cluster"]', "unregistered")
 
         # ---- wave 0: the identity everything else hangs off -----------------
         out["serviceaccount"] = {

@@ -187,13 +187,12 @@ func (h *harness) weave(name string) *v1alpha1.Weave {
 	return &w
 }
 
-func (h *harness) create(name, program string, sources []v1alpha1.Source, values string) *v1alpha1.Weave {
+func (h *harness) create(name, program, values string) *v1alpha1.Weave {
 	h.t.Helper()
 	w := &v1alpha1.Weave{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.namespace},
 		Spec: v1alpha1.WeaveSpec{
 			ServiceAccountName: "composer",
-			Sources:            sources,
 			Program:            program,
 		},
 	}
@@ -257,10 +256,6 @@ func requireCondition(t *testing.T, w *v1alpha1.Weave, condType string, status m
 	return c
 }
 
-func configMapSource(id, name string) v1alpha1.Source {
-	return v1alpha1.Source{ID: id, APIVersion: "v1", Kind: "ConfigMap", Name: name}
-}
-
 // The ordinary path: a source resolves, resources are applied, the Weave is
 // Ready and owns what it made.
 func TestReconcileAppliesAndOwns(t *testing.T) {
@@ -268,16 +263,16 @@ func TestReconcileAppliesAndOwns(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "abc-123"})
 
 	h.create("app", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {
         "settings": {
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": "settings"},
-            "data": {"tenantId": require(sources.tenant, "data.tenantId")},
+            "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
         },
     }
-`, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
+`, "")
 
 	h.settle("app", 2)
 
@@ -312,15 +307,15 @@ func TestSteadyStateDoesNotChurn(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "abc"})
 
 	h.create("app", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {
         "settings": {
             "apiVersion": "v1", "kind": "ConfigMap",
             "metadata": {"name": "settings"},
-            "data": {"tenantId": require(sources.tenant, "data.tenantId")},
+            "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
         },
     }
-`, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
+`, "")
 
 	h.settle("app", 3)
 	before := h.weave("app").ResourceVersion
@@ -343,12 +338,12 @@ func TestStagingThroughObserved(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "abc"})
 
 	h.create("app", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     out = {}
     out["identity"] = {
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "identity"},
-        "data": {"tenantId": require(sources.tenant, "data.tenantId")},
+        "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
     }
     uid = get(observed, ["identity", "metadata", "uid"])
     if not uid:
@@ -360,7 +355,7 @@ def compose(variable, sources, observed):
         "data": {"principalId": uid},
     }
     return out
-`, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
+`, "")
 
 	// First pass: only the identity, and the Weave says why it is not finished.
 	h.reconcile("app")
@@ -400,13 +395,13 @@ func TestSourceGateWithoutBeingRead(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("gated", `
-def compose(variable, sources, observed):
-    if not sources.gate:
+def compose(variable, observed):
+    if not read("v1", "ConfigMap", "gate"):
         return wait("the gate ConfigMap has not been created yet")
     return {
         "out": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}},
     }
-`, []v1alpha1.Source{configMapSource("gate", "gate")}, "")
+`, "")
 
 	h.reconcile("gated")
 	w := h.weave("gated")
@@ -445,13 +440,13 @@ func TestPruneWaitsOutTheDelay(t *testing.T) {
 	h.configMap("tenant", map[string]string{"keep": "yes", "extra": "yes"})
 
 	program := `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     out = {"keep": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}}}
-    if has(sources.tenant, "data.extra"):
+    if has(read("v1", "ConfigMap", "tenant"), "data.extra"):
         out["extra"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}}
     return out
 `
-	h.create("pruner", program, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
+	h.create("pruner", program, "")
 	h.settle("pruner", 2)
 
 	if !h.exists("extra") {
@@ -520,13 +515,13 @@ func TestReappearanceCancelsThePrune(t *testing.T) {
 	h.configMap("tenant", map[string]string{"extra": "yes"})
 
 	program := `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     out = {"keep": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}}}
-    if has(sources.tenant, "data.extra"):
+    if has(read("v1", "ConfigMap", "tenant"), "data.extra"):
         out["extra"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}}
     return out
 `
-	h.create("flapper", program, []v1alpha1.Source{configMapSource("tenant", "tenant")}, "")
+	h.create("flapper", program, "")
 	h.settle("flapper", 2)
 
 	cm, _ := h.getConfigMap("tenant")
@@ -566,7 +561,7 @@ func TestOrderedTeardown(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("stack", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     out = {}
     for i, name in enumerate(["base", "middle", "top"]):
         out[name] = {
@@ -574,7 +569,7 @@ def compose(variable, sources, observed):
             "metadata": {"name": name},
         }
     return out
-`, nil, "")
+`, "")
 	h.settle("stack", 2)
 
 	w := h.weave("stack")
@@ -647,9 +642,9 @@ func TestProgramFaultIsDegraded(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("broken", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     fail("the role table is empty")
-`, nil, "")
+`, "")
 
 	h.reconcile("broken")
 	w := h.weave("broken")
@@ -668,14 +663,14 @@ func TestCrossNamespaceOutputIsRefused(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("escapee", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {
         "out": {
             "apiVersion": "v1", "kind": "ConfigMap",
             "metadata": {"name": "out", "namespace": "somewhere-else"},
         },
     }
-`, nil, "")
+`, "")
 
 	h.reconcile("escapee")
 	requireCondition(t, h.weave("escapee"), naming.ConditionDegraded, metav1.ConditionTrue)
@@ -693,9 +688,9 @@ func TestDeletedOutputIsRecreated(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("healer", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {"out": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}}}
-`, nil, "")
+`, "")
 	h.settle("healer", 2)
 
 	cm, err := h.getConfigMap("out")
@@ -729,12 +724,12 @@ func TestEditingTheProgramConverges(t *testing.T) {
 	})
 
 	h.create("editable", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {
         "a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}},
         "b": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "b"}},
     }
-`, nil, "")
+`, "")
 	h.settle("editable", 2)
 
 	if !h.exists("a") || !h.exists("b") {
@@ -743,7 +738,7 @@ def compose(variable, sources, observed):
 
 	w := h.weave("editable")
 	w.Spec.Program = `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {"a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}}}
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
@@ -771,14 +766,14 @@ func TestRenamingAKeyReplacesTheResource(t *testing.T) {
 	})
 
 	h.create("renamer", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {"old": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "old-name"}}}
-`, nil, "")
+`, "")
 	h.settle("renamer", 2)
 
 	w := h.weave("renamer")
 	w.Spec.Program = `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {"new": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "new-name"}}}
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
@@ -805,9 +800,9 @@ def compose(variable, sources, observed):
 func TestFinalizerIsAddedFirst(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("finalized", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {}
-`, nil, "")
+`, "")
 
 	h.reconcile("finalized")
 	w := h.weave("finalized")
@@ -830,7 +825,7 @@ func TestVariablesKeepTheirTypes(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("typed", `
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {
         "out": {
             "apiVersion": "v1", "kind": "ConfigMap",
@@ -838,7 +833,7 @@ def compose(variable, sources, observed):
             "data": {"replicas": str(variable.replicas), "doubled": str(variable.replicas * 2)},
         },
     }
-`, nil, `{"replicas": 3}`)
+`, `{"replicas": 3}`)
 
 	h.settle("typed", 2)
 	cm, err := h.getConfigMap("out")

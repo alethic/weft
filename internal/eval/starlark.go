@@ -57,6 +57,17 @@ type Options struct {
 	// of that structure lands on the API server rather than on us.
 	MaxValues int
 
+	// MaxReads caps how many distinct resources one evaluation may read. A
+	// program that walks a generated list of names would otherwise turn one
+	// reconcile into an unbounded number of API calls, and every read is also a
+	// watch the controller has to keep alive afterwards.
+	MaxReads int
+
+	// MaxSelected caps how many objects one select() may match. A namespace
+	// with thousands of ConfigMaps should produce a legible error rather than
+	// an evaluation that converts all of them.
+	MaxSelected int
+
 	// CacheSize is the number of compiled programs to retain. Compilation is
 	// the expensive part and programs change rarely, so this is keyed by
 	// content hash and shared across every Weave in the cluster.
@@ -73,6 +84,8 @@ func DefaultOptions() Options {
 		MaxSteps:     20_000_000,
 		MaxResources: 250,
 		MaxValues:    250_000,
+		MaxReads:     100,
+		MaxSelected:  500,
 		CacheSize:    128,
 	}
 }
@@ -87,6 +100,12 @@ func (o *Options) applyDefaults() {
 	}
 	if o.MaxValues == 0 {
 		o.MaxValues = d.MaxValues
+	}
+	if o.MaxReads == 0 {
+		o.MaxReads = d.MaxReads
+	}
+	if o.MaxSelected == 0 {
+		o.MaxSelected = d.MaxSelected
 	}
 	if o.CacheSize == 0 {
 		o.CacheSize = d.CacheSize
@@ -154,13 +173,19 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 		}
 	}()
 
-	inputsV, err := objectToStarlark(req.Variables)
+	// The read session lives on the thread for the same reason wait and pending
+	// do: threads are per-evaluation, so nothing here is shared state.
+	thread.SetLocal(readerLocalKey, &readSession{
+		ctx:         ctx,
+		reader:      req.Reader,
+		max:         s.opts.MaxReads,
+		maxSelected: s.opts.MaxSelected,
+		seen:        map[string]bool{},
+	})
+
+	variablesV, err := objectToStarlark(req.Variables)
 	if err != nil {
 		return nil, programErrorf(ReasonInvalidArgument, "converting variables: %v", err)
-	}
-	sourcesV, err := objectToStarlark(sourcesMap(req.Sources))
-	if err != nil {
-		return nil, programErrorf(ReasonInvalidArgument, "converting sources: %v", err)
 	}
 	observedV, err := objectToStarlark(req.Observed)
 	if err != nil {
@@ -176,7 +201,7 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 	composeFn, ok := globals["compose"]
 	if !ok {
 		return nil, programErrorf(ReasonNoComposeFunc,
-			"program does not define compose(variable, sources, observed)")
+			"program does not define compose(variable, observed)")
 	}
 	callable, isCallable := composeFn.(starlark.Callable)
 	if !isCallable {
@@ -185,7 +210,7 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	ret, err := starlark.Call(thread, callable,
-		starlark.Tuple{inputsV, sourcesV, observedV}, nil)
+		starlark.Tuple{variablesV, observedV}, nil)
 	if err != nil {
 		return s.classify(ctx, thread, err)
 	}
@@ -200,21 +225,26 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 	return res, nil
 }
 
-// sourcesMap turns the resolved sources into a plain map, mapping an absent
-// source to nil so it reaches the program as None.
-func sourcesMap(src map[string]any) map[string]any {
-	if src == nil {
-		return map[string]any{}
-	}
-	return src
-}
-
 // classify turns an evaluation error into the right kind of outcome. The three
 // possibilities are genuinely different: a deliberate wait, a program fault,
 // and the caller giving up on us.
 func (s *Starlark) classify(ctx context.Context, thread *starlark.Thread, err error) (*Result, error) {
-	// A wait raised by require() is not a failure. Check this first: it travels
-	// on the thread precisely so it survives Starlark's error wrapping.
+	// A read that failed is the caller's error, not the program's. A permission
+	// denial or an uninstalled kind is a fact about the cluster, and the caller
+	// renders it far better than a Starlark backtrace would.
+	var readErr *errReadFailed
+	if errors.As(err, &readErr) {
+		return nil, readErr.err
+	}
+
+	// A ProgramError raised inside a builtin already knows what it is.
+	var raised *ProgramError
+	if errors.As(err, &raised) {
+		return nil, raised
+	}
+
+	// A wait raised by require() is not a failure. It travels on the thread
+	// precisely so it survives Starlark's error wrapping.
 	if w, ok := thread.Local(waitLocalKey).(*Wait); ok && w != nil {
 		return &Result{Wait: w}, nil
 	}

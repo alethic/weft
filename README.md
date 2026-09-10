@@ -84,7 +84,7 @@ spec:
     name: tenant
 
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
         tenant = require(sources.tenant, "data.tenantId")
         return {
             "settings": {
@@ -127,7 +127,7 @@ that is not ready. One rule covers both.
 A composition advances in phases by returning only what it can:
 
 ```python
-def compose(variable, sources, observed):
+def compose(variable, observed):
     out = {}
     out["identity"] = {...}                      # phase one
 
@@ -202,7 +202,7 @@ edges from expression references. Weft does not infer: sources are declared, and
 whether an absent one should block is a line in the program.
 
 ```python
-def compose(variable, sources, observed):
+def compose(variable, observed):
     # Nothing below reads a field off the database. Its existence is the
     # requirement.
     if not sources.database:

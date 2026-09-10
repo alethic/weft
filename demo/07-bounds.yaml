@@ -25,7 +25,9 @@ spec:
             return 0
         return countdown(n - 1)
 
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
+
+        platform = read("v1", "ConfigMap", "platform")
         countdown(10)
         return {}
 ---
@@ -41,7 +43,7 @@ spec:
   program: |
     load("helpers.star", "helper")
 
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
         return {}
 ---
 # Runtime bounding is what replaces the apply-time type checking a
@@ -54,7 +56,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
         total = 0
         for i in range(100000000):
             total += i
@@ -70,7 +72,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
         return {
             "escapee": {
                 "apiVersion": "v1",
@@ -89,7 +91,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
         return {
             "ns": {
                 "apiVersion": "v1",
@@ -108,7 +110,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
         return {
             "adopted": {
                 "apiVersion": "v1",
@@ -136,7 +138,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
         return {
             "annotated": {
                 "apiVersion": "v1",
@@ -160,18 +162,13 @@ metadata:
   namespace: weft-demo
 spec:
   serviceAccountName: composer
-  sources:
-    - id: platform
-      apiVersion: v1
-      kind: ConfigMap
-      name: platform
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
         return {
             "cfg": {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {"name": "cfg"},
-                "data": {"tenant": sources.platform.dta.tenantId},
+                "data": {"tenant": platform.dta.tenantId},
             },
         }

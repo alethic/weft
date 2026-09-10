@@ -110,7 +110,7 @@ controller:
   # object's deletion before it is released regardless. Blocking a stranger's
   # object, and their namespace deletion, forever is worse than an ordering
   # violation.
-  sourceFinalizerTimeout: 10m
+  holdTimeout: 10m
 
   # How long ordered teardown of a deleting Weave runs before the remainder is
   # handed to ordinary cascading collection.
@@ -137,6 +137,8 @@ controller:
     # enormous structure in very few steps, and that cost lands on the API
     # server rather than on the controller.
     maxValues: 250000
+    maxReads: 100
+    maxSelected: 500
     # Compiled programs retained, keyed by content hash and shared across every
     # Weave in the cluster.
     programCacheSize: 128

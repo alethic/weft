@@ -6,7 +6,7 @@ deterministic dialect of Python — in-process, once per reconcile.
 ## The contract
 
 ```python
-def compose(variable, sources, observed):
+def compose(variable, observed):
     return {"key": {...resource...}, ...}
 ```
 
@@ -275,7 +275,7 @@ rather than taken over, unless the object itself carries
 Two phases and a fan-out, which between them cover most of what compositions do:
 
 ```python
-def compose(variable, sources, observed):
+def compose(variable, observed):
     out = {}
 
     rg_id = require(sources.resourceGroup, "status.atProvider.id")

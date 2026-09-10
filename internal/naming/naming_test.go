@@ -18,26 +18,26 @@ func TestSourceFinalizerIsAValidQualifiedName(t *testing.T) {
 		{"a", "b"},
 	}
 	for _, c := range cases {
-		f := SourceFinalizer(c[0], c[1])
+		f := HeldFinalizer(c[0], c[1])
 		if errs := validation.IsQualifiedName(f); len(errs) > 0 {
-			t.Errorf("SourceFinalizer(%q, %q) = %q is not a qualified name: %v", c[0], c[1], f, errs)
+			t.Errorf("HeldFinalizer(%q, %q) = %q is not a qualified name: %v", c[0], c[1], f, errs)
 		}
-		if !IsSourceFinalizer(f) {
+		if !IsHeldFinalizer(f) {
 			t.Errorf("%q is not recognised as one of ours", f)
 		}
 	}
 }
 
 func TestSourceFinalizerIsStableAndDistinct(t *testing.T) {
-	a := SourceFinalizer("ns", "app")
-	if a != SourceFinalizer("ns", "app") {
+	a := HeldFinalizer("ns", "app")
+	if a != HeldFinalizer("ns", "app") {
 		t.Error("the same Weave must always produce the same finalizer")
 	}
-	if a == SourceFinalizer("ns", "other") {
+	if a == HeldFinalizer("ns", "other") {
 		t.Error("different Weaves must produce different finalizers")
 	}
 	// Namespace and name must not be able to trade characters and collide.
-	if SourceFinalizer("a", "bc") == SourceFinalizer("ab", "c") {
+	if HeldFinalizer("a", "bc") == HeldFinalizer("ab", "c") {
 		t.Error("namespace and name are not separated in the hash input")
 	}
 }
@@ -46,10 +46,10 @@ func TestForeignFinalizersAreNotClaimed(t *testing.T) {
 	for _, f := range []string{
 		"kubernetes.io/pv-protection",
 		"other.example/weft",
-		SourceFinalizerPrefix, // the bare prefix is not a finalizer we placed
+		HeldFinalizerPrefix, // the bare prefix is not a finalizer we placed
 		WeaveFinalizer,
 	} {
-		if IsSourceFinalizer(f) {
+		if IsHeldFinalizer(f) {
 			t.Errorf("%q should not be recognised as a source finalizer", f)
 		}
 	}
@@ -74,14 +74,14 @@ func TestUserFor(t *testing.T) {
 // Everything externally visible derives from Group, so a rename is one edit.
 func TestIdentifiersDeriveFromGroup(t *testing.T) {
 	for name, value := range map[string]string{
-		"GroupVersion":          GroupVersion,
-		"CRDName":               CRDName,
-		"FieldManager":          FieldManager,
-		"WeaveFinalizer":        WeaveFinalizer,
-		"SourceFinalizerPrefix": SourceFinalizerPrefix,
-		"WeaveLabel":            WeaveLabel,
-		"KeyAnnotation":         KeyAnnotation,
-		"WaveAnnotation":        WaveAnnotation,
+		"GroupVersion":        GroupVersion,
+		"CRDName":             CRDName,
+		"FieldManager":        FieldManager,
+		"WeaveFinalizer":      WeaveFinalizer,
+		"HeldFinalizerPrefix": HeldFinalizerPrefix,
+		"WeaveLabel":          WeaveLabel,
+		"KeyAnnotation":       KeyAnnotation,
+		"WaveAnnotation":      WaveAnnotation,
 	} {
 		if !strings.Contains(value, Group) {
 			t.Errorf("%s = %q does not derive from Group %q", name, value, Group)

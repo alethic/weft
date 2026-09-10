@@ -20,6 +20,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	klabels "k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/dynamic"
@@ -277,6 +278,27 @@ func (c *Client) Get(ctx context.Context, gvk schema.GroupVersionKind, name stri
 		return nil, asPermissionError(err, c.namespace, c.serviceAccount, "get", gvr, gvk.Kind, name)
 	}
 	return obj, nil
+}
+
+// List reads every object of a kind in the client's namespace matching the
+// labels. An empty selector matches everything of that kind.
+//
+// Namespaced like every other read: there is no cross-namespace form, because
+// the permission to perform one could not be granted by a namespace user.
+func (c *Client) List(ctx context.Context, gvk schema.GroupVersionKind, labels map[string]string) ([]unstructured.Unstructured, error) {
+	gvr, err := c.resourceFor(gvk)
+	if err != nil {
+		return nil, err
+	}
+	opts := metav1.ListOptions{}
+	if len(labels) > 0 {
+		opts.LabelSelector = klabels.SelectorFromSet(labels).String()
+	}
+	list, err := c.dyn.Resource(gvr).Namespace(c.namespace).List(ctx, opts)
+	if err != nil {
+		return nil, asPermissionError(err, c.namespace, c.serviceAccount, "list", gvr, gvk.Kind, "")
+	}
+	return list.Items, nil
 }
 
 // Apply server-side applies an object, taking ownership of the fields it sets.

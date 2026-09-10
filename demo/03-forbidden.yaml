@@ -16,18 +16,14 @@ metadata:
   namespace: weft-demo
 spec:
   serviceAccountName: powerless
-  sources:
-    - id: platform
-      apiVersion: v1
-      kind: ConfigMap
-      name: platform
   program: |
-    def compose(variable, sources, observed):
+    def compose(variable, observed):
+        platform = read("v1", "ConfigMap", "platform")
         return {
             "should-never-exist": {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {"name": "should-never-exist"},
-                "data": {"tenant": require(sources.platform, "data.tenantId")},
+                "data": {"tenant": require(platform, "data.tenantId")},
             },
         }

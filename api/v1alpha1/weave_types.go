@@ -6,66 +6,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// Source declares an existing resource this composition reads, or waits on.
-//
-// Sources are resources; variables are keys. A program reaches a source through
-// sources.<id> and gets the whole object, or None when it does not exist.
-//
-// Whether an absent source should block is the program's decision, written in
-// its body rather than declared here:
-//
-//	if not sources.database:
-//	    return wait("the database has not been created yet")
-//
-// which also expresses the thing a flag on this struct could not - gating that
-// depends on configuration:
-//
-//	if variable.useSql and not sources.database:
-//	    return wait("SQL is enabled but the database is not there yet")
-//
-// The list itself is static and declarative, because it is what the permission
-// checks and the watch registration key off, and neither can wait for an
-// evaluation that needs the sources first. A program cannot reach a resource
-// not declared here.
-type Source struct {
-	// ID is the name this source is bound to inside the program, as
-	// sources.<id>. It must be a legal Starlark identifier.
-	//
-	// +kubebuilder:validation:Pattern="^[A-Za-z_][A-Za-z0-9_]*$"
-	// +kubebuilder:validation:MaxLength=63
-	ID string `json:"id"`
-
-	// APIVersion of the resource to read, e.g. "azure.m.upbound.io/v1beta1",
-	// or "v1" for core types.
-	//
-	// +kubebuilder:validation:MinLength=1
-	APIVersion string `json:"apiVersion"`
-
-	// Kind of the resource to read.
-	//
-	// +kubebuilder:validation:MinLength=1
-	Kind string `json:"kind"`
-
-	// Name of the resource to read. Always in the Weave's own namespace;
-	// cross-namespace reads are not expressible.
-	//
-	// +kubebuilder:validation:MinLength=1
-	Name string `json:"name"`
-
-	// Finalize places a finalizer on this resource so outputs derived from it
-	// are torn down before it is allowed to disappear.
-	//
-	// This requires update permission on the resource under the Weave's
-	// ServiceAccount. Missing permission surfaces as Degraded rather than
-	// silently doing nothing. The finalizer is released after the configured
-	// timeout regardless of teardown progress: blocking somebody else's
-	// object, and their namespace deletion, forever is worse than an ordering
-	// violation.
-	//
-	// +optional
-	Finalize bool `json:"finalize,omitempty"`
-}
-
 // Variable is one entry in spec.variables. Exactly one field is set.
 //
 // +kubebuilder:validation:XValidation:rule="(has(self.values) ? 1 : 0) + (has(self.configMap) ? 1 : 0) + (has(self.secret) ? 1 : 0) == 1",message="set exactly one of values, configMap or secret"
@@ -158,15 +98,8 @@ type WeaveSpec struct {
 	// +listType=atomic
 	Variables []Variable `json:"variables,omitempty"`
 
-	// Sources are the existing resources this composition reads.
-	//
-	// +optional
-	// +listType=map
-	// +listMapKey=id
-	Sources []Source `json:"sources,omitempty"`
-
 	// Program is a Starlark program defining
-	// compose(variable, sources, observed), returning a mapping of stable key to
+	// compose(variable, observed), returning a mapping of stable key to
 	// resource. Keys are the inventory identity: renaming a key does not
 	// rename anything, it deletes one resource and creates another.
 	//
@@ -230,24 +163,37 @@ type InventoryEntry struct {
 	// object's own managedFields already record when Weft last wrote to it.
 }
 
-// SourceStatus tracks per-source state that has to survive a controller
-// restart.
-type SourceStatus struct {
-	// ID matches the declared source.
-	ID string `json:"id"`
+// HeldResource is a resource this Weave has placed a finalizer on, because a
+// program read it with finalize=True.
+//
+// It is recorded rather than derived because the request lives in the program,
+// and a program that stops asking - or stops running at all - must still leave
+// something behind that says what to release.
+type HeldResource struct {
+	// APIVersion of the held resource.
+	APIVersion string `json:"apiVersion"`
 
-	// Finalized is true once Weft has successfully placed its finalizer on
-	// the source.
-	//
-	// +optional
-	Finalized bool `json:"finalized,omitempty"`
+	// Kind of the held resource.
+	Kind string `json:"kind"`
 
-	// TeardownStartedAt is set when a finalized source began deleting. It
-	// starts the clock on the hard timeout after which the finalizer is
-	// released regardless of teardown progress.
+	// Name of the held resource, in the Weave's own namespace.
+	Name string `json:"name"`
+
+	// TeardownStartedAt is set when a held resource began deleting. It starts
+	// the clock on the hard timeout after which the finalizer is released
+	// regardless of teardown progress.
 	//
 	// +optional
 	TeardownStartedAt *metav1.Time `json:"teardownStartedAt,omitempty"`
+}
+
+// ReadRef identifies one resource a program read, or one selection it made.
+type ReadRef struct {
+	// APIVersion of what was read.
+	APIVersion string `json:"apiVersion"`
+
+	// Kind of what was read.
+	Kind string `json:"kind"`
 }
 
 // WeaveStatus is the observed state of a Weave.
@@ -293,12 +239,23 @@ type WeaveStatus struct {
 	// +listType=atomic
 	Superseded []InventoryEntry `json:"superseded,omitempty"`
 
-	// Sources carries per-source bookkeeping for finalized sources.
+	// Reads records the kinds this composition read on its last successful
+	// pass. It is the watch set: a program that reads a ResourceGroup has to
+	// be woken when one changes, and the only record of that is what it
+	// actually asked for.
+	//
+	// Kept across restarts so a Weave that is waiting still has its watches
+	// re-established without having to evaluate first.
 	//
 	// +optional
-	// +listType=map
-	// +listMapKey=id
-	Sources []SourceStatus `json:"sources,omitempty"`
+	// +listType=atomic
+	Reads []ReadRef `json:"reads,omitempty"`
+
+	// Held records the resources this Weave has placed a finalizer on.
+	//
+	// +optional
+	// +listType=atomic
+	Held []HeldResource `json:"held,omitempty"`
 }
 
 // Weave reads existing resources in its namespace and generates others from
@@ -327,16 +284,6 @@ type WeaveList struct {
 	Items           []Weave `json:"items"`
 }
 
-// SourceByID returns the declared source with the given id.
-func (s *WeaveSpec) SourceByID(id string) (Source, bool) {
-	for _, src := range s.Sources {
-		if src.ID == id {
-			return src, true
-		}
-	}
-	return Source{}, false
-}
-
 // InventoryByKey returns the inventory entry for a key.
 func (s *WeaveStatus) InventoryByKey(key string) (*InventoryEntry, bool) {
 	for i := range s.Inventory {
@@ -347,11 +294,12 @@ func (s *WeaveStatus) InventoryByKey(key string) (*InventoryEntry, bool) {
 	return nil, false
 }
 
-// SourceStatusByID returns the tracked status for a source id.
-func (s *WeaveStatus) SourceStatusByID(id string) (*SourceStatus, bool) {
-	for i := range s.Sources {
-		if s.Sources[i].ID == id {
-			return &s.Sources[i], true
+// HeldByRef returns the tracked hold on a resource.
+func (s *WeaveStatus) HeldByRef(apiVersion, kind, name string) (*HeldResource, bool) {
+	for i := range s.Held {
+		h := &s.Held[i]
+		if h.APIVersion == apiVersion && h.Kind == kind && h.Name == name {
+			return h, true
 		}
 	}
 	return nil, false

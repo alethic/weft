@@ -74,17 +74,11 @@ func TestGeneratedCRDMatchesNaming(t *testing.T) {
 }
 
 func TestHelpers(t *testing.T) {
-	spec := WeaveSpec{Sources: []Source{{ID: "rg"}, {ID: "vault"}}}
-	if _, ok := spec.SourceByID("vault"); !ok {
-		t.Error("SourceByID should find a declared source")
-	}
-	if _, ok := spec.SourceByID("nope"); ok {
-		t.Error("SourceByID should not invent one")
-	}
-
 	status := WeaveStatus{
 		Inventory: []InventoryEntry{{Key: "a"}, {Key: "b"}},
-		Sources:   []SourceStatus{{ID: "rg", Finalized: true}},
+		Held: []HeldResource{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "upstream"},
+		},
 	}
 	if e, ok := status.InventoryByKey("b"); !ok || e.Key != "b" {
 		t.Error("InventoryByKey should find an entry")
@@ -92,7 +86,10 @@ func TestHelpers(t *testing.T) {
 	if _, ok := status.InventoryByKey("c"); ok {
 		t.Error("InventoryByKey should not invent one")
 	}
-	if s, ok := status.SourceStatusByID("rg"); !ok || !s.Finalized {
-		t.Error("SourceStatusByID should find a tracked source")
+	if _, ok := status.HeldByRef("v1", "ConfigMap", "upstream"); !ok {
+		t.Error("HeldByRef should find a recorded hold")
+	}
+	if _, ok := status.HeldByRef("v1", "Secret", "upstream"); ok {
+		t.Error("HeldByRef must match on kind, not only name")
 	}
 }
