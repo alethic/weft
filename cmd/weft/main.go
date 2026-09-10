@@ -88,6 +88,10 @@ func bindFlags(fs *flag.FlagSet, c *config) {
 		"Consecutive successful evaluations a resource must be absent from before it is deleted. "+
 			"Managed resources drop their status transiently while a provider restarts, and deleting on the first "+
 			"sight of that churns real infrastructure.")
+	fs.DurationVar(&c.opts.PruneDelay, "prune-delay", d.PruneDelay,
+		"How long a resource must have been continuously absent from successful evaluations before it is "+
+			"deleted. This is the half of the hysteresis that actually protects anything: reconciles are "+
+			"event-driven, so a count of them measures controller activity rather than elapsed time.")
 	fs.DurationVar(&c.opts.SourceFinalizerTimeout, "source-finalizer-timeout", d.SourceFinalizerTimeout,
 		"How long a finalizer placed on a source may block that source's deletion before it is released anyway.")
 	fs.DurationVar(&c.opts.TeardownTimeout, "teardown-timeout", d.TeardownTimeout,

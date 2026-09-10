@@ -42,6 +42,12 @@ type Options struct {
 	// must be absent from before it is deleted.
 	PruneThreshold int32
 
+	// PruneDelay is how long a resource must have been continuously absent
+	// before it is deleted. This is the half of the hysteresis that actually
+	// protects anything, because reconciles are event-driven and a count of
+	// them measures controller activity rather than elapsed time.
+	PruneDelay time.Duration
+
 	// SourceFinalizerTimeout bounds how long a finalizer placed on somebody
 	// else's object may block its deletion.
 	SourceFinalizerTimeout time.Duration
@@ -58,8 +64,13 @@ type Options struct {
 	// reconciles; this only bounds how long a missed event can go unnoticed.
 	Backstop time.Duration
 
-	// DegradedRetry is the requeue period while Degraded. The fix is usually a
-	// RoleBinding, which is not something this controller watches for.
+	// DegradedRetry is the requeue period while Degraded.
+	//
+	// Kept short because the fix is almost always a RoleBinding, and RBAC is
+	// not something this controller watches. Debugging permissions is the
+	// primary user experience here, and a two-minute gap between granting a
+	// role and seeing the Weave notice makes that experience feel broken even
+	// though it is working.
 	DegradedRetry time.Duration
 }
 
@@ -67,11 +78,12 @@ type Options struct {
 func DefaultOptions() Options {
 	return Options{
 		PruneThreshold:         3,
+		PruneDelay:             2 * time.Minute,
 		SourceFinalizerTimeout: 10 * time.Minute,
 		TeardownTimeout:        15 * time.Minute,
 		PollInterval:           30 * time.Second,
 		Backstop:               10 * time.Minute,
-		DegradedRetry:          2 * time.Minute,
+		DegradedRetry:          30 * time.Second,
 	}
 }
 
@@ -79,6 +91,9 @@ func (o *Options) applyDefaults() {
 	d := DefaultOptions()
 	if o.PruneThreshold <= 0 {
 		o.PruneThreshold = d.PruneThreshold
+	}
+	if o.PruneDelay == 0 {
+		o.PruneDelay = d.PruneDelay
 	}
 	if o.SourceFinalizerTimeout == 0 {
 		o.SourceFinalizerTimeout = d.SourceFinalizerTimeout
@@ -218,7 +233,7 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 		requeue = r.Opts.PollInterval
 	}
 
-	result, err := r.compose(ctx, c, weave)
+	pass, err := r.compose(ctx, c, weave)
 	if err != nil {
 		var h *halt
 		if errors.As(err, &h) {
@@ -236,29 +251,43 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 		return ctrl.Result{}, err
 	}
 
+	// A resource waiting out its prune delay has no other source of events, so
+	// the Weave schedules its own wake-up for it.
+	if pass.wakeIn > 0 && pass.wakeIn < requeue {
+		requeue = pass.wakeIn
+	}
+
 	if report.Degraded() {
-		setCondition(weave, naming.ConditionReady, metav1.ConditionTrue, ReasonApplied, result)
+		setCondition(weave, naming.ConditionReady, metav1.ConditionTrue, ReasonApplied, pass.summary)
 		setCondition(weave, naming.ConditionWaiting, metav1.ConditionFalse, ReasonApplied, "nothing outstanding")
 		setCondition(weave, naming.ConditionDegraded, metav1.ConditionTrue, ReasonWatchDegraded,
 			watchFailureMessage(report))
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
 
-	markReady(weave, result)
+	markReady(weave, pass.summary)
 	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
-// compose runs one full pass and returns a summary for the Ready condition.
-func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (string, error) {
+// pass is the outcome of one successful evaluation.
+type pass struct {
+	// summary becomes the Ready condition message.
+	summary string
+	// wakeIn asks for a requeue sooner than the caller would otherwise pick.
+	wakeIn time.Duration
+}
+
+// compose runs one full pass.
+func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (pass, error) {
 	resolved, err := r.resolveSources(ctx, c, weave)
 	if err != nil {
-		return "", err
+		return pass{}, err
 	}
 
 	// Finalizer handling runs before evaluation because a source that is going
 	// away means the answer is "tear down", not "recompute".
 	if err := r.reconcileSourceFinalizers(ctx, c, weave, resolved); err != nil {
-		return "", err
+		return pass{}, err
 	}
 
 	if len(resolved.missingRequired) > 0 {
@@ -266,13 +295,13 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 		// it. This is the only way to express a pure ordering edge, and any
 		// design that infers dependencies from expression references alone
 		// drops it silently.
-		return "", waitingf(ReasonSourceMissing,
+		return pass{}, waitingf(ReasonSourceMissing,
 			"waiting for %s", joinWithAnd(resolved.missingRequired))
 	}
 
 	observed, err := r.readObserved(ctx, c, weave)
 	if err != nil {
-		return "", err
+		return pass{}, err
 	}
 
 	res, err := r.Evaluator.Evaluate(ctx, eval.Request{
@@ -284,13 +313,13 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 	if err != nil {
 		var pe *eval.ProgramError
 		if errors.As(err, &pe) {
-			return "", degradedf(pe.Reason, "%s", programMessage(pe))
+			return pass{}, degradedf(pe.Reason, "%s", programMessage(pe))
 		}
-		return "", err
+		return pass{}, err
 	}
 
 	if res.Waiting() {
-		return "", waitingf(ReasonFieldUnresolved, "%s", res.Wait.Reason)
+		return pass{}, waitingf(ReasonFieldUnresolved, "%s", res.Wait.Reason)
 	}
 
 	owner := kube.Owner{
@@ -301,10 +330,10 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 	}
 	items, err := inventory.Build(res.Resources, weave.Namespace, owner)
 	if err != nil {
-		return "", degradedf(eval.ReasonInvalidOutput, "%v", err)
+		return pass{}, degradedf(eval.ReasonInvalidOutput, "%v", err)
 	}
 
-	diff := inventory.Compute(weave.Status.Inventory, items, r.Opts.PruneThreshold)
+	diff := inventory.Compute(weave.Status.Inventory, items, r.Opts.PruneThreshold, r.Opts.PruneDelay, time.Now())
 
 	applied, applyErr := r.applyAll(ctx, c, diff.Apply)
 
@@ -312,23 +341,28 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 	// created just before an error is not left off the inventory and orphaned.
 	weave.Status.Inventory = inventory.Merge(applied, concat(diff.Retained, diff.Prune))
 	if applyErr != nil {
-		return "", applyErr
+		return pass{}, applyErr
+	}
+
+	out := pass{summary: summarize(len(applied), len(diff.Retained))}
+	if len(diff.Retained) > 0 {
+		out.wakeIn = requeueFor(diff.Retained, r.Opts.PruneDelay)
 	}
 
 	if len(diff.Prune) > 0 {
 		remaining, err := r.deleteWaves(ctx, c, diff.Prune)
 		if err != nil {
-			return "", err
+			return pass{}, err
 		}
 		weave.Status.Inventory = inventory.Merge(applied, concat(diff.Retained, remaining))
 		if len(remaining) > 0 {
-			return "", waitingf(ReasonTearingDown,
+			return pass{}, waitingf(ReasonTearingDown,
 				"removing %s, which the program no longer returns", describeEntries(remaining, 5))
 		}
 		r.eventf(weave, "Normal", "Pruned", "removed %d resources the program no longer returns", len(diff.Prune))
 	}
 
-	return summarize(len(applied), len(diff.Retained)), nil
+	return out, nil
 }
 
 // reconcileDeletion tears resources down in reverse dependency order before
@@ -501,6 +535,29 @@ func joinWithAnd(items []string) string {
 // concat joins two entry slices without appending into either one's backing
 // array, which would otherwise let a second call quietly overwrite the first
 // call's result.
+// requeueFor returns how long until the soonest retained entry becomes
+// prunable. Nothing else generates an event when a delay expires, so the Weave
+// has to schedule its own wake-up.
+func requeueFor(retained []v1alpha1.InventoryEntry, delay time.Duration) time.Duration {
+	soonest := time.Duration(0)
+	for _, e := range retained {
+		if e.MissingSince == nil {
+			continue
+		}
+		left := time.Until(e.MissingSince.Add(delay))
+		if left < time.Second {
+			left = time.Second
+		}
+		if soonest == 0 || left < soonest {
+			soonest = left
+		}
+	}
+	if soonest == 0 {
+		return delay
+	}
+	return soonest
+}
+
 func concat(a, b []v1alpha1.InventoryEntry) []v1alpha1.InventoryEntry {
 	out := make([]v1alpha1.InventoryEntry, 0, len(a)+len(b))
 	out = append(out, a...)

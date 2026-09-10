@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
@@ -95,17 +97,21 @@ type Diff struct {
 
 // Compute diffs a desired set against the recorded inventory.
 //
-// The threshold exists because absence is not always meaningful. Managed
-// resources transiently drop their status while a provider restarts, and a
-// program that waits on a status field will legitimately stop returning
-// whatever depends on it for a reconcile or two. Deleting on the first sight of
-// that churns real infrastructure, so a resource has to be absent from several
-// consecutive successful evaluations before it is torn down.
+// Absence is not always meaningful. A managed resource drops its status while
+// its provider restarts, and a program waiting on that status legitimately
+// stops returning whatever depends on it for as long as the restart takes.
+// Deleting on the first sight of that churns real infrastructure.
 //
-// Callers must only apply this to a successful evaluation. An evaluation that
-// waited or failed says nothing about what should exist, and counting it would
-// make a provider outage look like a deletion.
-func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32) Diff {
+// Both a count and a delay have to pass, and the delay is the one doing the
+// work. Reconciles are event-driven, and the applies in a single pass generate
+// watch events of their own, so a handful of "consecutive evaluations" can
+// complete inside a second. A count alone measures controller activity; only a
+// clock measures how long something has actually been gone.
+//
+// Callers must only apply this to a successful evaluation. One that waited or
+// failed says nothing about what should exist, and counting it would make a
+// provider outage look like a deletion.
+func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32, delay time.Duration, now time.Time) Diff {
 	if threshold < 1 {
 		threshold = 1
 	}
@@ -122,8 +128,16 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32)
 		if wanted[e.Key] {
 			continue
 		}
-		e.MissingCount++
-		if e.MissingCount >= threshold {
+		// Capped, because status writes wake the Weave through its own watch
+		// and a forever-climbing counter is a forever-spinning controller.
+		if e.MissingCount < threshold {
+			e.MissingCount++
+		}
+		if e.MissingSince == nil {
+			since := metav1.NewTime(now)
+			e.MissingSince = &since
+		}
+		if e.MissingCount >= threshold && !now.Before(e.MissingSince.Add(delay)) {
 			d.Prune = append(d.Prune, e)
 		} else {
 			d.Retained = append(d.Retained, e)

@@ -1,8 +1,12 @@
 package inventory
 
 import (
+	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/eval"
@@ -207,56 +211,113 @@ func inventoryEntry(key string, wave int32, missing int32) v1alpha1.InventoryEnt
 	}
 }
 
+const testDelay = 2 * time.Minute
+
 // A resource absent from one evaluation is not deleted. Managed resources drop
 // their status while a provider restarts, and a program waiting on that status
 // legitimately stops returning what depends on it.
 func TestComputeHysteresis(t *testing.T) {
+	t0 := time.Now()
 	current := []v1alpha1.InventoryEntry{inventoryEntry("gone", 1, 0), inventoryEntry("kept", 0, 0)}
 	desired, err := Build(evaluated("kept"), "ns", owner())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	d := Compute(current, desired, 3)
+	d := Compute(current, desired, 3, testDelay, t0)
 	if len(d.Prune) != 0 {
 		t.Fatalf("nothing should be pruned on the first absence, got %v", d.Prune)
 	}
 	if len(d.Retained) != 1 || d.Retained[0].MissingCount != 1 {
 		t.Fatalf("retained = %+v", d.Retained)
 	}
-
-	// Second absence.
-	d = Compute([]v1alpha1.InventoryEntry{d.Retained[0], inventoryEntry("kept", 0, 0)}, desired, 3)
-	if len(d.Prune) != 0 || d.Retained[0].MissingCount != 2 {
-		t.Fatalf("second pass: prune=%v retained=%+v", d.Prune, d.Retained)
+	if d.Retained[0].MissingSince == nil {
+		t.Fatal("the first absence must start the clock")
 	}
 
-	// Third absence reaches the threshold.
-	d = Compute([]v1alpha1.InventoryEntry{d.Retained[0], inventoryEntry("kept", 0, 0)}, desired, 3)
+	// The count reaches the threshold almost immediately, because reconciles
+	// are event-driven and the applies in one pass generate events of their
+	// own. The delay is what actually holds the resource.
+	next := d.Retained[0]
+	for i := 2; i <= 6; i++ {
+		d = Compute([]v1alpha1.InventoryEntry{next, inventoryEntry("kept", 0, 0)}, desired, 3, testDelay,
+			t0.Add(time.Duration(i)*time.Second))
+		if len(d.Prune) != 0 {
+			t.Fatalf("pass %d pruned after %d seconds; the delay is %s", i, i, testDelay)
+		}
+		next = d.Retained[0]
+	}
+	if next.MissingCount < 3 {
+		t.Fatalf("MissingCount = %d; the count threshold should long since have passed", next.MissingCount)
+	}
+
+	// Once the delay has elapsed, it goes.
+	d = Compute([]v1alpha1.InventoryEntry{next, inventoryEntry("kept", 0, 0)}, desired, 3, testDelay,
+		t0.Add(testDelay+time.Second))
 	if len(d.Prune) != 1 || d.Prune[0].Key != "gone" {
-		t.Fatalf("third pass should prune, got %v", d.Prune)
+		t.Fatalf("should prune once the delay has elapsed, got %v", d.Prune)
 	}
 	if len(d.Retained) != 0 {
 		t.Errorf("retained = %v", d.Retained)
 	}
 }
 
-func TestComputeReappearanceResetsTheCount(t *testing.T) {
-	current := []v1alpha1.InventoryEntry{inventoryEntry("flaky", 0, 2)}
+// The count alone must not be sufficient, or a busy reconcile loop deletes
+// through the delay.
+func TestComputeCountAloneDoesNotPrune(t *testing.T) {
+	t0 := time.Now()
+	since := metav1.NewTime(t0)
+	entry := inventoryEntry("gone", 0, 99)
+	entry.MissingSince = &since
+
+	desired, err := Build(evaluated("kept"), "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := Compute([]v1alpha1.InventoryEntry{entry}, desired, 3, testDelay, t0.Add(time.Second))
+	if len(d.Prune) != 0 {
+		t.Errorf("a high count with no elapsed time pruned anyway: %v", d.Prune)
+	}
+}
+
+// And the delay alone must not be sufficient either: one anomalous evaluation
+// long after the fact should not delete anything.
+func TestComputeDelayAloneDoesNotPrune(t *testing.T) {
+	t0 := time.Now()
+	desired, err := Build(evaluated("kept"), "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// First absence, observed long after the entry was created. The clock
+	// starts now, not retroactively.
+	d := Compute([]v1alpha1.InventoryEntry{inventoryEntry("gone", 0, 0)}, desired, 3, testDelay, t0)
+	if len(d.Prune) != 0 {
+		t.Errorf("first absence pruned immediately: %v", d.Prune)
+	}
+}
+
+func TestComputeReappearanceResetsTheHysteresis(t *testing.T) {
+	since := metav1.NewTime(time.Now().Add(-time.Hour))
+	entry := inventoryEntry("flaky", 0, 2)
+	entry.MissingSince = &since
+
 	desired, err := Build(evaluated("flaky"), "ns", owner())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	d := Compute(current, desired, 3)
+	d := Compute([]v1alpha1.InventoryEntry{entry}, desired, 3, testDelay, time.Now())
 	if len(d.Prune) != 0 || len(d.Retained) != 0 {
 		t.Fatalf("a returned resource is neither pruned nor retained: %+v", d)
 	}
-	// The entry recorded after the apply carries a zero count, which is what
-	// resets the hysteresis.
+	// The entry recorded after the apply carries no count and no clock, which
+	// is what resets the hysteresis. A resource that flaps must not accumulate
+	// its way to deletion.
 	e := Entry(d.Apply[0], nil)
-	if e.MissingCount != 0 {
-		t.Errorf("MissingCount = %d, want 0", e.MissingCount)
+	if e.MissingCount != 0 || e.MissingSince != nil {
+		t.Errorf("hysteresis survived a reappearance: count=%d since=%v", e.MissingCount, e.MissingSince)
 	}
 }
 
@@ -323,5 +384,57 @@ func TestGroupVersionKind(t *testing.T) {
 
 	if _, err := GroupVersionKind(v1alpha1.InventoryEntry{Key: "x", APIVersion: "a/b/c"}); err == nil {
 		t.Error("an unparseable apiVersion should be an error")
+	}
+}
+
+// A status write wakes the Weave through its own watch. If two reconciles over
+// an unchanged world produce different inventories, the controller writes
+// status, wakes itself, writes status again, and never stops - which is exactly
+// what an informational "last applied" timestamp did before it was removed.
+func TestSteadyStateInventoryIsIdentical(t *testing.T) {
+	desired, err := Build(evaluated("identity", "assignment"), "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pass := func() []v1alpha1.InventoryEntry {
+		applied := make([]v1alpha1.InventoryEntry, 0, len(desired))
+		for _, item := range desired {
+			applied = append(applied, Entry(item, nil))
+		}
+		return Merge(applied, nil)
+	}
+
+	first := pass()
+	time.Sleep(2 * time.Millisecond)
+	second := pass()
+
+	if !reflect.DeepEqual(first, second) {
+		t.Errorf("two identical reconciles produced different inventories, which spins the controller forever:\n %+v\n %+v",
+			first, second)
+	}
+}
+
+// The counter has to stop climbing too, for the same reason.
+func TestMissingCountStopsAtTheThreshold(t *testing.T) {
+	t0 := time.Now()
+	desired, err := Build(evaluated("kept"), "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entry := inventoryEntry("gone", 0, 0)
+	var last v1alpha1.InventoryEntry
+	for i := 0; i < 20; i++ {
+		d := Compute([]v1alpha1.InventoryEntry{entry}, desired, 3, time.Hour, t0.Add(time.Duration(i)*time.Second))
+		if len(d.Retained) != 1 {
+			t.Fatalf("pass %d: retained %d entries", i, len(d.Retained))
+		}
+		last = d.Retained[0]
+		entry = last
+	}
+
+	if last.MissingCount != 3 {
+		t.Errorf("MissingCount = %d after 20 passes, want it capped at the threshold of 3", last.MissingCount)
 	}
 }

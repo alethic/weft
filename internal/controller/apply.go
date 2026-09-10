@@ -22,7 +22,6 @@ import (
 // this replaces.
 func (r *WeaveReconciler) applyAll(ctx context.Context, c *kube.Client, items []inventory.Item) ([]v1alpha1.InventoryEntry, error) {
 	applied := make([]v1alpha1.InventoryEntry, 0, len(items))
-	now := metav1.Now()
 
 	for _, wave := range inventory.ApplyWaves(items) {
 		var waveErr error
@@ -34,9 +33,7 @@ func (r *WeaveReconciler) applyAll(ctx context.Context, c *kube.Client, items []
 				}
 				continue
 			}
-			entry := inventory.Entry(item, out)
-			entry.LastAppliedAt = &now
-			applied = append(applied, entry)
+			applied = append(applied, inventory.Entry(item, out))
 		}
 		// Stop at the wave boundary rather than at the first failure: siblings
 		// in a wave are independent, but a later wave may well depend on the

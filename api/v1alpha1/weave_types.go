@@ -120,18 +120,35 @@ type InventoryEntry struct {
 	Wave int32 `json:"wave"`
 
 	// MissingCount is the number of consecutive successful evaluations in
-	// which this resource was not returned. Pruning waits for this to reach
-	// the configured threshold: managed resources transiently drop status
-	// during provider restarts, and a naive implementation churns real
-	// infrastructure.
+	// which this resource was not returned.
+	//
+	// It stops climbing once it reaches the threshold. That is not cosmetic:
+	// a status write wakes the Weave through its own watch, so a field that
+	// changes on every pass is a self-sustaining reconcile loop.
 	//
 	// +optional
 	MissingCount int32 `json:"missingCount,omitempty"`
 
-	// LastAppliedAt is when this resource was last successfully applied.
+	// MissingSince is when this resource first stopped being returned by a
+	// successful evaluation, and is cleared the moment it comes back.
+	//
+	// Pruning waits on elapsed time, not only on a count. Reconciles are
+	// event-driven and the applies in a single pass generate watch events of
+	// their own, so several "consecutive evaluations" can complete inside a
+	// second - which is no protection at all against the thing hysteresis
+	// exists for. A managed resource drops its status for as long as its
+	// provider takes to restart, and a program waiting on that status
+	// legitimately stops returning whatever depends on it for that whole
+	// period. Only a clock measures that.
 	//
 	// +optional
-	LastAppliedAt *metav1.Time `json:"lastAppliedAt,omitempty"`
+	MissingSince *metav1.Time `json:"missingSince,omitempty"`
+
+	// There is deliberately no "last applied" timestamp here. Every reconcile
+	// re-applies, so such a field would change on every pass, and because a
+	// status write wakes the Weave through its own watch it would spin every
+	// Weave in the cluster forever for a purely informational value. The
+	// object's own managedFields already record when Weft last wrote to it.
 }
 
 // SourceStatus tracks per-source state that has to survive a controller
