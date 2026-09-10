@@ -43,9 +43,16 @@ Namespaced **and** impersonated **and** status-reactive was unoccupied.
 ## Quick start
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/alethic/weft/main/config/crd/weft.run_weaves.yaml
-kubectl kustomize config | kubectl apply -f -
+helm install weft oci://ghcr.io/alethic/charts/weft \
+  --namespace weft-system --create-namespace
 ```
+
+The chart is the supported install path and is documented in
+[charts/weft/README.md](charts/weft/README.md). It ships sensible defaults, a
+values schema that rejects malformed input at install time, and refuses to
+render a handful of configurations that would only fail later - a templated
+impersonation group without an explicit acknowledgement of what it grants,
+several replicas with leader election off, and so on.
 
 Then, as an ordinary namespace user:
 
@@ -118,7 +125,8 @@ def compose(inputs, sources, observed):
 
     pid = get(observed, ["identity", "status", "atProvider", "principalId"])
     if not pid:
-        return out                               # nothing else is ready yet
+        pending("principalId on the app identity")
+        return out                               # the identity is applied anyway
 
     for role in inputs.roles:                    # phase two
         out["ra-" + role.name] = {...}
@@ -128,6 +136,11 @@ def compose(inputs, sources, observed):
 No `dependsOn`, no explicit graph. Conditional inclusion *is* the dependency
 edge, and the watch on the identity wakes the `Weave` the moment its status is
 written back.
+
+`pending()` rather than `wait()` matters here: a wait produces no resources at
+all, so the identity everything depends on would never be created and the
+composition could never advance past it. `pending()` applies what is ready and
+still reports what is outstanding.
 
 ### Identity is the key, not the position
 
@@ -224,11 +237,14 @@ If any `Weave` uses `finalize: true`, release those finalizers **before**
 removing the controller, or the objects holding them cannot be deleted:
 
 ```bash
-weft reap --dry-run
-weft reap
+kubectl -n weft-system exec deploy/weft -- /weft reap --dry-run
+kubectl -n weft-system exec deploy/weft -- /weft reap
+helm uninstall weft --namespace weft-system
 ```
 
-`make undeploy` does not do this for you.
+`helm uninstall` does not do this for you. It also leaves the CRD behind on
+purpose: deleting it deletes every `Weave` in the cluster, and each one deleted
+that way takes the resources it owns with it.
 
 ## Non-goals
 
@@ -259,5 +275,11 @@ fixed during development were found that way rather than by the unit tests.
 ```bash
 make            # generate, fmt, vet, test, build
 make run        # run against the current kubecontext
-make deploy     # install into a cluster
+make lint-chart # lint and render the Helm chart
+make deploy     # helm upgrade --install into a cluster
 ```
+
+`make generate` regenerates the deepcopy functions, the CRD and the controller
+ClusterRole, and copies the CRD into the chart. Tests fail if that copy is
+stale, if the chart stops granting a permission controller-gen says the
+controller needs, or if the chart renders arguments the binary cannot parse.

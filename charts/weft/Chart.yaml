@@ -1,0 +1,66 @@
+apiVersion: v2
+name: weft
+description: |
+  A Kubernetes operator that lets an ordinary namespace user apply one custom
+  resource that reads existing resources in their namespace and generates
+  others from them, reactively, running as their own ServiceAccount.
+type: application
+
+# Chart version. Bumped for chart changes; appVersion tracks the controller.
+version: 0.1.0
+appVersion: "0.1.0"
+
+# Server-side apply through the dynamic client, and metadata-only informers,
+# are both long settled by here.
+kubeVersion: ">=1.27.0-0"
+
+home: https://github.com/alethic/weft
+sources:
+  - https://github.com/alethic/weft
+
+keywords:
+  - operator
+  - composition
+  - impersonation
+  - rbac
+  - crossplane
+  - gitops
+
+maintainers:
+  - name: Alethic
+    url: https://github.com/alethic
+
+annotations:
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Basic Install
+  artifacthub.io/crds: |
+    - kind: Weave
+      version: v1alpha1
+      name: weaves.weft.run
+      displayName: Weave
+      description: |
+        Reads existing resources in its namespace and generates others from
+        them, applying everything as the ServiceAccount it names.
+  artifacthub.io/crdsExamples: |
+    - apiVersion: weft.run/v1alpha1
+      kind: Weave
+      metadata:
+        name: app
+      spec:
+        serviceAccountName: composer
+        sources:
+          - id: tenant
+            apiVersion: v1
+            kind: ConfigMap
+            name: tenant
+            required: true
+        program: |
+          def compose(inputs, sources, observed):
+              return {
+                  "settings": {
+                      "apiVersion": "v1",
+                      "kind": "ConfigMap",
+                      "metadata": {"name": "settings"},
+                      "data": {"tenantId": require(sources.tenant, "data.tenantId")},
+                  },
+              }

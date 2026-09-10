@@ -1,0 +1,67 @@
+weft {{ .Chart.AppVersion }} installed as {{ .Release.Name }} in {{ .Release.Namespace }}.
+
+Watch it come up:
+
+  kubectl -n {{ .Release.Namespace }} rollout status deployment/{{ include "weft.fullname" . }}
+
+{{ if .Values.controller.watchNamespace -}}
+Restricted to the namespace {{ .Values.controller.watchNamespace | quote }}. A Weave anywhere
+else is ignored.
+{{- else -}}
+Watching every namespace.
+{{- end }}
+{{ if eq .Values.rbac.impersonation.scope "namespaced" -}}
+Impersonation is confined to: {{ join ", " .Values.rbac.impersonation.namespaces }}
+A Weave in any other namespace will report a permission error, which is what
+confining it means.
+{{- end }}
+
+A namespace user needs nothing from you to author one, but the ServiceAccount
+their Weave names does need permission to read its sources and write its
+outputs. Weft tells them exactly what is missing, in commands they can paste:
+
+  kubectl describe weave <name>
+
+To try it:
+
+  kubectl create serviceaccount composer
+  kubectl create rolebinding composer-edit --clusterrole=edit --serviceaccount=$(kubectl config view --minify -o jsonpath='{..namespace}'):composer
+  kubectl apply -f https://raw.githubusercontent.com/alethic/weft/main/examples/app.yaml
+
+{{ if not .Values.metrics.enabled -}}
+Metrics are disabled. Set metrics.enabled=true to expose them on :{{ .Values.metrics.port }}.
+{{- else if not .Values.metrics.serviceMonitor.enabled -}}
+Metrics are on :{{ .Values.metrics.port }}. Set metrics.serviceMonitor.enabled=true if you run the
+Prometheus Operator.
+{{- end }}
+
+{{- if gt (int .Values.replicaCount) 1 }}
+{{ if not .Values.podDisruptionBudget.enabled -}}
+Running {{ .Values.replicaCount }} replicas without a PodDisruptionBudget. Consider
+podDisruptionBudget.enabled=true so a drain cannot take them all at once.
+{{- end }}
+{{- end }}
+
+{{- if not .Values.crds.keep }}
+
+WARNING: crds.keep is false. Uninstalling this release will delete the Weave
+CRD, which deletes every Weave in the cluster, and each of those takes the
+resources it owns with it. An uninstall would destroy infrastructure.
+{{- end }}
+
+{{- if .Values.rbac.allowUnrestrictedGroupImpersonation }}
+
+WARNING: rbac.allowUnrestrictedGroupImpersonation is true, so this controller
+may impersonate any group, including system:masters. Anyone who compromises it
+holds cluster-admin. This is only needed for a templated group such as
+system:serviceaccounts:{namespace}.
+{{- end }}
+
+BEFORE YOU UNINSTALL: if any Weave declares a source with finalize: true, Weft
+has placed finalizers on objects it does not own. Release them first, or those
+objects cannot be deleted and neither can their namespaces:
+
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "weft.fullname" . }} -- /weft reap --dry-run
+  kubectl -n {{ .Release.Namespace }} exec deploy/{{ include "weft.fullname" . }} -- /weft reap
+
+Docs: https://github.com/alethic/weft

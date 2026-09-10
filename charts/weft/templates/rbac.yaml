@@ -1,0 +1,148 @@
+{{- include "weft.validate" . -}}
+{{- if .Values.rbac.create }}
+{{- $fullName := include "weft.fullname" . }}
+{{- $sa := include "weft.serviceAccountName" . }}
+# The controller's entire grant. It is worth reading for what is absent: there
+# is no write access to any resource type a composition might generate. This
+# controller cannot create a ConfigMap or a RoleAssignment on its own account.
+# It can only become a ServiceAccount that already could, which is what makes a
+# Weave incapable of producing anything its author could not have produced by
+# hand.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "weft.labels" . | nindent 4 }}
+rules:
+  # Weaves themselves. update is for the finalizer, which is what buys ordered
+  # teardown; without it, deleting a Weave hands everything to cascading
+  # collection at once and in no particular order.
+  - apiGroups: ["weft.run"]
+    resources: ["weaves"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["weft.run"]
+    resources: ["weaves/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["weft.run"]
+    resources: ["weaves/finalizers"]
+    verbs: ["update"]
+
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+
+  {{- if eq .Values.rbac.impersonation.scope "cluster" }}
+  # Impersonating a username of the form system:serviceaccount:<ns>:<name> is
+  # authorised against the serviceaccounts resource in that namespace, so this
+  # is the cluster-wide form of a grant that can also be made per namespace.
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["impersonate"]
+  {{- end }}
+
+  {{- if .Values.controller.impersonateGroups }}
+  # Group impersonation, pinned by name.
+  #
+  # The API server does not derive group membership from a username, so without
+  # this the impersonated identity would be strictly weaker than the real
+  # ServiceAccount and RBAC bound to system:authenticated would silently not
+  # apply. Pinning the names matters just as much: an unrestricted grant here
+  # would let anyone who compromised this controller impersonate
+  # system:masters.
+  - apiGroups: [""]
+    resources: ["groups"]
+    verbs: ["impersonate"]
+    {{- if not (include "weft.hasTemplatedGroup" .) }}
+    resourceNames:
+      {{- range .Values.controller.impersonateGroups }}
+      - {{ . | quote }}
+      {{- end }}
+    {{- end }}
+  {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "weft.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+
+{{- if eq .Values.rbac.impersonation.scope "namespaced" }}
+{{- range $ns := .Values.rbac.impersonation.namespaces }}
+---
+# Weft may impersonate ServiceAccounts only in the namespaces listed here. A
+# Weave anywhere else fails with a permission error naming this grant, which is
+# the intended outcome of confining it.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullName }}-impersonate
+  namespace: {{ $ns }}
+  labels:
+    {{- include "weft.labels" $ | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["impersonate"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullName }}-impersonate
+  namespace: {{ $ns }}
+  labels:
+    {{- include "weft.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullName }}-impersonate
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.controller.leaderElection.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $fullName }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "weft.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $fullName }}-leader-election
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "weft.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $fullName }}-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: {{ $sa }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
+{{- end }}

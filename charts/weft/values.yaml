@@ -1,0 +1,257 @@
+# Default values for weft.
+
+# Number of controller replicas.
+#
+# One is enough: leader election means only one replica reconciles at a time, so
+# a second buys a faster handover during a node failure or a rollout rather than
+# more throughput. Set podDisruptionBudget.enabled when you raise this.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/alethic/weft
+  # Defaults to the chart's appVersion when empty.
+  tag: ""
+  # A digest, when set, wins over tag. Pin this in production: a tag can move.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  # Generated from the release name when empty.
+  name: ""
+  annotations: {}
+  automountServiceAccountToken: true
+
+crds:
+  # Install the Weave CRD as part of this release.
+  #
+  # Turn this off when CRDs are managed separately, which is common in clusters
+  # where custom resource definitions are a cluster-admin concern and the
+  # controller is not.
+  install: true
+
+  # Leave the CRD behind when the release is uninstalled.
+  #
+  # On by default, and worth understanding before turning it off: deleting the
+  # CRD deletes every Weave in the cluster, and every Weave deleted that way
+  # takes the resources it owns with it. Uninstalling a controller should not
+  # be able to destroy infrastructure.
+  keep: true
+
+rbac:
+  create: true
+
+  impersonation:
+    # cluster    - one ClusterRole; Weft may impersonate a ServiceAccount in
+    #              any namespace, which is what makes a Weave work in a
+    #              namespace nobody told the platform team about.
+    # namespaced - a Role in each namespace listed below, and nowhere else.
+    #              Choose this when Weft should be confined, and accept that
+    #              onboarding a namespace becomes a chart change.
+    scope: cluster
+    namespaces: []
+
+  # Allow impersonating groups without restricting which ones.
+  #
+  # The shipped ClusterRole pins the two groups Weft actually uses, because an
+  # unrestricted grant lets anyone who compromises the controller impersonate
+  # system:masters. That is a worse position than the one this project exists
+  # to avoid, so widening it is deliberate rather than incidental.
+  #
+  # Only needed if controller.impersonateGroups contains a templated entry such
+  # as system:serviceaccounts:{namespace}, whose full set cannot be enumerated
+  # ahead of time. The chart refuses to render that combination without this.
+  allowUnrestrictedGroupImpersonation: false
+
+controller:
+  # Restrict the controller to one namespace. Empty watches all of them.
+  watchNamespace: ""
+
+  leaderElection:
+    enabled: true
+    # Lease name. Change it only to run two independent Weft installations.
+    id: weft.run
+
+  # Groups impersonated alongside the ServiceAccount username.
+  #
+  # The API server does not derive group membership from a username, so
+  # impersonating the username alone produces an identity strictly weaker than
+  # the real ServiceAccount, and RBAC bound to system:authenticated silently
+  # fails to apply. Weaker is not safer here: it makes Weft fail on grants a
+  # user can plainly see are present.
+  #
+  # {namespace} is substituted with the Weave's namespace. Adding
+  # system:serviceaccounts:{namespace} also requires
+  # rbac.allowUnrestrictedGroupImpersonation.
+  impersonateGroups:
+    - system:serviceaccounts
+    - system:authenticated
+
+  # How long a resource must be continuously absent from successful evaluations
+  # before it is deleted.
+  #
+  # This is the half of the hysteresis that protects anything. Reconciles are
+  # event-driven and the applies in a single pass generate watch events of
+  # their own, so a count of them measures controller activity rather than
+  # elapsed time. A managed resource drops its status for as long as its
+  # provider takes to restart; raise this above your provider's restart time.
+  pruneDelay: 2m
+
+  # Successful evaluations a resource must also be absent from. A secondary
+  # guard against one anomalous evaluation.
+  pruneThreshold: 3
+
+  # How long a finalizer Weft placed on somebody else's object may block that
+  # object's deletion before it is released regardless. Blocking a stranger's
+  # object, and their namespace deletion, forever is worse than an ordering
+  # violation.
+  sourceFinalizerTimeout: 10m
+
+  # How long ordered teardown of a deleting Weave runs before the remainder is
+  # handed to ordinary cascading collection.
+  teardownTimeout: 15m
+
+  # Requeue period for a Weave whose watches could not be established and which
+  # is running on polling instead.
+  pollInterval: 30s
+
+  # Requeue period in the normal case. Watches drive reconciles; this only
+  # bounds how long a missed event can go unnoticed.
+  backstopInterval: 10m
+
+  # Requeue period while a Weave is Degraded. Short because the fix is almost
+  # always a RoleBinding, and RBAC is not something this controller watches.
+  degradedRetry: 30s
+
+  evaluator:
+    # Execution budget for one call to compose().
+    maxSteps: 20000000
+    # Most resources one evaluation may return.
+    maxResources: 250
+    # Most values one evaluation's result may contain. A program can build an
+    # enormous structure in very few steps, and that cost lands on the API
+    # server rather than on the controller.
+    maxValues: 250000
+    # Compiled programs retained, keyed by content hash and shared across every
+    # Weave in the cluster.
+    programCacheSize: 128
+
+  watches:
+    # Informer resync period. Resyncs are filtered out before they reach the
+    # queue, so this bounds how long a missed event goes unnoticed rather than
+    # driving reconciles.
+    resync: 10m
+    # How long a watch runs before it is torn down and re-established.
+    # Authorisation is checked when a watch opens and not continuously, so this
+    # bounds how long a revoked grant keeps being honoured.
+    lifetime: 30m
+
+  log:
+    # debug, info, error, or an integer for custom verbosity.
+    level: info
+    # json or console.
+    encoder: json
+    # info, error, or panic.
+    stacktraceLevel: error
+
+  # Appended verbatim to the container's arguments. An escape hatch for flags
+  # this chart does not model.
+  extraArgs: []
+
+metrics:
+  enabled: true
+  port: 8080
+
+  service:
+    enabled: true
+    type: ClusterIP
+    port: 8080
+    annotations: {}
+    labels: {}
+
+  # Requires the Prometheus Operator.
+  serviceMonitor:
+    enabled: false
+    # Defaults to the release namespace when empty.
+    namespace: ""
+    interval: 30s
+    scrapeTimeout: ""
+    labels: {}
+    annotations: {}
+    honorLabels: false
+    relabelings: []
+    metricRelabelings: []
+
+health:
+  port: 8081
+
+livenessProbe:
+  initialDelaySeconds: 15
+  periodSeconds: 20
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  initialDelaySeconds: 5
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    # No CPU limit on purpose. A controller's work is bursty, and a CPU limit
+    # turns a burst into CFS throttling, which shows up as reconcile latency
+    # rather than as anything obviously wrong. The request is what schedules it;
+    # set a limit here only if your policy requires one.
+    memory: 512Mi
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+priorityClassName: ""
+
+# The controller finishes the reconcile in flight and releases its lease.
+terminationGracePeriodSeconds: 30
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+  # Set one or the other, not both.
+  maxUnavailable: ""
+
+# Extra container environment, volumes and mounts. Useful for a proxy
+# configuration or a custom CA bundle.
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
+# Applied to the Deployment's pod template, not to the Deployment itself.
+dnsPolicy: ""
+dnsConfig: {}
+hostAliases: []

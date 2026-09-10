@@ -1,0 +1,21 @@
+{{- if .Values.crds.install }}
+{{- /*
+The CRD is the generated one, copied verbatim into files/ by "make generate",
+so the chart cannot drift from the Go types. It is parsed here only to attach
+the chart's labels and, when asked, the annotation that keeps it through an
+uninstall.
+*/}}
+{{- $crd := .Files.Get "files/weaves-crd.yaml" | fromYaml }}
+{{- $meta := $crd.metadata }}
+{{- $_ := set $meta "labels" (merge (default (dict) $meta.labels) (include "weft.labels" . | fromYaml)) }}
+{{- if .Values.crds.keep }}
+{{- /*
+Deleting this CRD deletes every Weave in the cluster, and each of those takes
+the resources it owns with it. Uninstalling a controller must not be able to
+destroy infrastructure.
+*/}}
+{{- $_ := set $meta "annotations" (merge (default (dict) $meta.annotations) (dict "helm.sh/resource-policy" "keep")) }}
+{{- end }}
+{{- $_ := set $crd "metadata" $meta }}
+{{- toYaml $crd }}
+{{- end }}
