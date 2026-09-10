@@ -78,13 +78,20 @@ var (
 	// waves are applied first and deleted last.
 	WaveAnnotation = Group + "/wave"
 
-	// AdoptAnnotation opts an existing object into being taken over by a Weave,
-	// and its value is the name of the Weave allowed to do so.
+	// AdoptAnnotation opts an existing object into being taken over by a Weave.
+	// Its value is a name, or a pattern: "*" consents to any Weave in this
+	// namespace, and "app-*" to any whose name starts with app-.
 	//
 	// It lives on the object being adopted rather than in the Weave on purpose.
 	// Consent has to come from whoever holds the thing, or "adoption" is just a
 	// Weave author choosing a name and helping themselves to somebody else's
 	// resource - which is the whole reason the unannotated case is refused.
+	//
+	// A pattern is still consent, and still namespaced: a Weave only ever acts
+	// in its own namespace, so "*" grants no more than "anybody who can already
+	// create a Weave here". It is the form to reach for when onboarding a set
+	// of objects at once, where naming the Weave on each of them is busywork
+	// that says nothing extra.
 	AdoptAnnotation = Group + "/adopt"
 )
 

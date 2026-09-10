@@ -48,8 +48,29 @@ The annotation goes **on the object, not in the Weave**. That is the point: if a
 author helping themselves to somebody else's resource. Consent has to come from
 whoever holds the thing.
 
-The annotation names one `Weave`. One naming a different `Weave` is not consent
-for this one.
+### Patterns
+
+The value is a name or a shell-style pattern, so a set can be onboarded without
+naming the same `Weave` on every object:
+
+```bash
+# Any Weave in this namespace.
+kubectl -n weft-demo annotate ConfigMap legacy weft.run/adopt='*'
+
+# Any whose name starts with app-.
+kubectl -n weft-demo annotate ConfigMap legacy weft.run/adopt='app-*'
+```
+
+A pattern is still consent and still namespaced. A `Weave` only ever acts in its
+own namespace, so `*` grants no more than "anybody who can already create a
+`Weave` here" — and creating one there is not something an outsider can do.
+Reach for it when annotating each object with the same name is typing that
+carries no extra information; use the exact name when it does carry some.
+
+An annotation that does not match is not consent, and the refusal quotes it
+back, so a typo in a pattern shows up as a refusal that names it rather than as
+an adoption nobody meant. A pattern that will not compile matches nothing, which
+is the safe direction to fail in.
 
 On the next reconcile Weft takes ownership and records an event, because this is
 a change worth being able to find later:

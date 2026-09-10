@@ -159,6 +159,10 @@ program author helping themselves:
 kubectl annotate configmap legacy weft.run/adopt=<weave-name>
 ```
 
+The value is a pattern, so `weft.run/adopt='*'` consents to any `Weave` in that
+namespace — the form for onboarding a set of objects at once, where naming the
+same `Weave` on each of them says nothing extra.
+
 From then on that `Weave` manages it, and deleting the `Weave` deletes it.
 [docs/ownership.md](docs/ownership.md) covers the whole story, including what
 happens when a program is edited to change what a key addresses.

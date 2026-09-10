@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -83,7 +84,7 @@ func (r *WeaveReconciler) checkOwnership(
 		// in the sense that deleting the Weave will now delete this object.
 		r.eventf(weave, "Normal", "Adopted",
 			"took ownership of %s %q, which was annotated %s=%s. Deleting this Weave now deletes it.",
-			gvk.Kind, name, naming.AdoptAnnotation, weave.Name)
+			gvk.Kind, name, naming.AdoptAnnotation, owner.adopt)
 		return nil
 
 	case owner.key != "" && owner.key != item.Key:
@@ -118,8 +119,24 @@ type weftOwnership struct {
 
 // adoptableBy reports whether the object has consented to being taken over by
 // the named Weave.
+//
+// The annotation is a name or a shell-style pattern, so "*" consents to any
+// Weave in the namespace. Onboarding a directory of existing objects otherwise
+// means annotating each one with the same Weave name, which is typing that
+// carries no information.
+//
+// A malformed pattern is not consent. Silently matching nothing is the right
+// failure: the refusal message quotes the value back, so a broken pattern shows
+// up as a refusal that names it rather than as an adoption nobody meant.
 func (o weftOwnership) adoptableBy(weave string) bool {
-	return o.adopt != "" && o.adopt == weave
+	if o.adopt == "" {
+		return false
+	}
+	if o.adopt == weave {
+		return true
+	}
+	ok, err := path.Match(o.adopt, weave)
+	return err == nil && ok
 }
 
 // weftOwner reports whether an object was created by this Weave.
@@ -162,7 +179,8 @@ func adoptionMessage(item inventory.Item, existing *unstructured.Unstructured, o
 		msg += fmt.Sprintf("\n\nIt was last written by %q.", owner.manager)
 	}
 	if owner.adopt != "" {
-		msg += fmt.Sprintf("\n\nIt is annotated for adoption by the Weave %q, which is not this one.", owner.adopt)
+		msg += fmt.Sprintf("\n\nIt is annotated %s=%q, which does not match this Weave, %q.",
+			naming.AdoptAnnotation, owner.adopt, ownerName)
 	}
 
 	msg += "\n\nWeft will not take over an object it did not create. Applying would add its owner " +
@@ -172,8 +190,10 @@ func adoptionMessage(item inventory.Item, existing *unstructured.Unstructured, o
 		fmt.Sprintf("  kubectl -n %s annotate %s %s %s=%s\n\n",
 			existing.GetNamespace(), gvk.Kind, item.Object.GetName(),
 			naming.AdoptAnnotation, ownerName) +
-		"From then on this Weave manages it, and deleting the Weave deletes it. Otherwise change the " +
-		"name the program produces, or remove what is there:\n" +
+		"From then on this Weave manages it, and deleting the Weave deletes it. The value is a pattern, " +
+		"so \"*\" consents to any Weave in this namespace - the form to reach for when onboarding a set " +
+		"of objects at once.\n\nOtherwise change the name the program produces, or remove what is " +
+		"there:\n" +
 		fmt.Sprintf("  kubectl -n %s delete %s %s",
 			existing.GetNamespace(), gvk.Kind, item.Object.GetName())
 	return msg
