@@ -234,10 +234,6 @@ type WeaveList struct {
 	Items           []Weave `json:"items"`
 }
 
-func init() {
-	SchemeBuilder.Register(&Weave{}, &WeaveList{})
-}
-
 // SourceByID returns the declared source with the given id.
 func (s *WeaveSpec) SourceByID(id string) (Source, bool) {
 	for _, src := range s.Sources {

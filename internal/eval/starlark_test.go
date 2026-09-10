@@ -31,14 +31,6 @@ func programError(t *testing.T, err error) *ProgramError {
 	return pe
 }
 
-func resource(apiVersion, kind, name string) map[string]any {
-	return map[string]any{
-		"apiVersion": apiVersion,
-		"kind":       kind,
-		"metadata":   map[string]any{"name": name},
-	}
-}
-
 func TestReturnsResource(t *testing.T) {
 	res := mustRun(t, `
 def compose(inputs, sources, observed):
@@ -865,4 +857,68 @@ def compose(inputs, sources, observed):
 	if len(res.Pending) != 0 {
 		t.Errorf("pending = %v, want none", res.Pending)
 	}
+}
+
+// The language bounds live in a per-compilation FileOptions rather than the
+// package-level resolve.Allow* variables, which are process-global and could be
+// changed by anything else in the binary. These assert the resulting dialect is
+// the intended one, since a silently wrong option would either break working
+// programs or quietly widen what an untrusted author can do.
+func TestLanguageBounds(t *testing.T) {
+	t.Run("sets are available", func(t *testing.T) {
+		res := mustRun(t, `
+def compose(inputs, sources, observed):
+    unique = set(["a", "b", "a"])
+    return {
+        "c": {
+            "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
+            "data": {"n": str(len(unique))},
+        },
+    }
+`, Request{})
+		if got := res.Resources[0].Object["data"].(map[string]any)["n"]; got != "2" {
+			t.Errorf("set deduplication produced %v, want 2", got)
+		}
+	})
+
+	t.Run("while is rejected", func(t *testing.T) {
+		_, err := run(t, `
+def compose(inputs, sources, observed):
+    while True:
+        break
+    return {}
+`, Request{})
+		pe := programError(t, err)
+		if pe.Reason != ReasonSyntaxError {
+			t.Errorf("reason = %q, want %q", pe.Reason, ReasonSyntaxError)
+		}
+	})
+
+	t.Run("top-level control flow is rejected", func(t *testing.T) {
+		_, err := run(t, `
+if 1 == 1:
+    x = 2
+
+def compose(inputs, sources, observed):
+    return {}
+`, Request{})
+		pe := programError(t, err)
+		if pe.Reason != ReasonSyntaxError {
+			t.Errorf("reason = %q, want %q", pe.Reason, ReasonSyntaxError)
+		}
+	})
+
+	t.Run("global reassignment is rejected", func(t *testing.T) {
+		_, err := run(t, `
+X = 1
+X = 2
+
+def compose(inputs, sources, observed):
+    return {}
+`, Request{})
+		pe := programError(t, err)
+		if pe.Reason != ReasonSyntaxError {
+			t.Errorf("reason = %q, want %q", pe.Reason, ReasonSyntaxError)
+		}
+	})
 }

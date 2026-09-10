@@ -9,11 +9,15 @@ CHART ?= charts/weft
 NAMESPACE ?= weft-system
 CONTROLLER_GEN ?= go tool controller-gen
 SETUP_ENVTEST ?= go tool setup-envtest
+# Pinned so a local run and CI disagree about nothing. Bumping it here is the
+# only place it changes.
+GOLANGCI_LINT_VERSION ?= v2.13.2
+GOLANGCI_LINT ?= $(shell command -v golangci-lint 2>/dev/null || echo $(shell go env GOPATH)/bin/golangci-lint)
 ENVTEST_K8S_VERSION ?= 1.34.x
 ENVTEST_DIR := $(CURDIR)/bin/envtest
 
 .PHONY: all
-all: generate fmt vet test build
+all: generate fmt vet lint test build
 
 .PHONY: generate
 generate: ## Regenerate deepcopy, the CRD and the controller ClusterRole.
@@ -31,6 +35,15 @@ fmt:
 .PHONY: vet
 vet:
 	go vet ./...
+
+.PHONY: lint
+lint: ## Run golangci-lint, installing the pinned version if it is missing.
+	@if ! $(GOLANGCI_LINT) --version 2>/dev/null | grep -q "$(patsubst v%,%,$(GOLANGCI_LINT_VERSION))"; then 		echo "installing golangci-lint $(GOLANGCI_LINT_VERSION)"; 		curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh 			| sh -s -- -b $(shell go env GOPATH)/bin $(GOLANGCI_LINT_VERSION); 	fi
+	$(GOLANGCI_LINT) run ./...
+
+.PHONY: vulncheck
+vulncheck: ## Check dependencies against the Go vulnerability database.
+	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
 .PHONY: envtest
 envtest: ## Download the control-plane binaries the controller tests run against.

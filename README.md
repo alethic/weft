@@ -291,9 +291,10 @@ automated: impersonation *denial* specifically, and source finalizers.
 ## Development
 
 ```bash
-make            # generate, fmt, vet, test, build
+make            # generate, fmt, vet, lint, test, build
 make envtest    # fetch the control plane the controller tests run against
 make test       # everything
+make lint       # golangci-lint, pinned to the version CI uses
 make run        # run against the current kubecontext
 make lint-chart # lint and render the Helm chart
 make deploy     # helm upgrade --install into a cluster

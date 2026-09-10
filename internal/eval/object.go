@@ -161,13 +161,28 @@ func (o *Object) didYouMean(name string) string {
 	return fmt.Sprintf(" (has: %s%s)", strings.Join(shown, ", "), suffix)
 }
 
+// receiverObject recovers the object a bound method was called on. The
+// assertion is checked rather than assumed: an unchecked one here would be a
+// panic inside the interpreter, which takes down the reconcile rather than
+// failing the Weave.
+func receiverObject(b *starlark.Builtin) (*Object, error) {
+	o, ok := b.Receiver().(*Object)
+	if !ok {
+		return nil, fmt.Errorf("%s: receiver is a %s, not an object", b.Name(), b.Receiver().Type())
+	}
+	return o, nil
+}
+
 func objectGet(t *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kwargs []starlark.Tuple) (starlark.Value, error) {
 	var key starlark.Value
 	def := starlark.Value(starlark.None)
 	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 1, &key, &def); err != nil {
 		return nil, err
 	}
-	o := b.Receiver().(*Object)
+	o, err := receiverObject(b)
+	if err != nil {
+		return nil, err
+	}
 	v, found, err := o.Get(key)
 	if err != nil {
 		return nil, err
@@ -182,7 +197,10 @@ func objectKeys(t *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, kw
 	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
 		return nil, err
 	}
-	o := b.Receiver().(*Object)
+	o, err := receiverObject(b)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]starlark.Value, 0, len(o.keys))
 	for _, k := range o.keys {
 		items = append(items, starlark.String(k))
@@ -194,7 +212,10 @@ func objectValues(t *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, 
 	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
 		return nil, err
 	}
-	o := b.Receiver().(*Object)
+	o, err := receiverObject(b)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]starlark.Value, 0, len(o.keys))
 	for _, k := range o.keys {
 		items = append(items, o.m[k])
@@ -206,7 +227,10 @@ func objectItems(t *starlark.Thread, b *starlark.Builtin, args starlark.Tuple, k
 	if err := starlark.UnpackPositionalArgs(b.Name(), args, kwargs, 0); err != nil {
 		return nil, err
 	}
-	o := b.Receiver().(*Object)
+	o, err := receiverObject(b)
+	if err != nil {
+		return nil, err
+	}
 	items := make([]starlark.Value, 0, len(o.keys))
 	for _, k := range o.keys {
 		items = append(items, starlark.Tuple{starlark.String(k), o.m[k]})

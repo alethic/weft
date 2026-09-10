@@ -36,6 +36,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: sigstore/cosign-installer@v3
+
       - id: push
         uses: docker/build-push-action@v6
         with:
@@ -51,6 +53,23 @@ jobs:
             DATE=${{ github.event.repository.updated_at }}
           provenance: true
           sbom: true
+
+      # Keyless, so there is no signing key to protect or rotate: the signature
+      # is bound to this workflow's OIDC identity and recorded in the public
+      # transparency log. Worth the two lines for an image that, once running,
+      # holds the right to impersonate ServiceAccounts.
+      - name: Sign the image
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ steps.push.outputs.digest }}
+
+      - name: Verify the signature
+        run: |
+          cosign verify "${IMAGE}@${DIGEST}"             --certificate-identity-regexp "^https://github.com/${{ github.repository }}/"             --certificate-oidc-issuer https://token.actions.githubusercontent.com             >/dev/null
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          DIGEST: ${{ steps.push.outputs.digest }}
 
   chart:
     runs-on: ubuntu-latest
@@ -111,6 +130,12 @@ jobs:
             ```
 
             Image: `${{ env.IMAGE }}@${{ needs.image.outputs.digest }}`
+
+            Both the image and the chart are signed with cosign, keyless:
+
+            ```bash
+            cosign verify ${{ env.IMAGE }}@${{ needs.image.outputs.digest }}               --certificate-identity-regexp "^https://github.com/${{ github.repository }}/"               --certificate-oidc-issuer https://token.actions.githubusercontent.com
+            ```
 
             Before uninstalling, release any finalizers Weft has placed on
             objects it does not own:

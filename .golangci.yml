@@ -1,0 +1,49 @@
+version: "2"
+
+run:
+  timeout: 5m
+  # The controller tests only build with a control plane available, but they
+  # should still be linted.
+  tests: true
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - gocritic
+    - misspell
+    - nolintlint
+    - revive
+    - unconvert
+    - whitespace
+
+  settings:
+    errcheck:
+      check-type-assertions: true
+    revive:
+      rules:
+        - name: exported
+          disabled: true
+    misspell:
+      # No locale. The identifiers follow Kubernetes convention (Finalize,
+      # Normalize) while the prose is British, so enforcing either locale
+      # would flag correct spellings. This still catches genuine typos.
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+  exclusions:
+    presets:
+      - comments
+      - std-error-handling
+    rules:
+      # Assertions in tests are noisy under errcheck and add nothing.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gocritic
+
+formatters:
+  enable:
+    - gofmt

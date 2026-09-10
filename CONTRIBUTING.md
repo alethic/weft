@@ -3,15 +3,36 @@
 ## Getting set up
 
 ```bash
-make            # generate, fmt, vet, test, build
+make            # generate, fmt, vet, lint, test, build
 make envtest    # fetch the control-plane binaries the controller tests need
 make test       # everything
+make lint       # golangci-lint, pinned
+make vulncheck  # dependencies against the Go vulnerability database
 ```
 
-Two toolchain dependencies are pinned in `go.mod` as tool dependencies, so
-`go tool` resolves them without a separate install: `controller-gen` and
-`setup-envtest`. `helm` and a control plane come from `make envtest` and your
-package manager.
+`controller-gen` and `setup-envtest` are pinned in `go.mod` as tool
+dependencies, so `go tool` resolves them without a separate install.
+`golangci-lint` is pinned in the Makefile and installed on first use. CI runs
+`make lint` and `make vulncheck` rather than reimplementing them, so a local run
+and a CI run cannot disagree about versions.
+
+`helm` you supply; without it the chart tests skip.
+
+## What CI checks
+
+Beyond the tests: generated files are current, formatting is clean,
+`golangci-lint` passes, dependencies have no known vulnerabilities, the image
+builds and reports its version, the image has no fixable HIGH or CRITICAL
+findings, and the chart renders every configuration it claims to support while
+refusing the ones it should.
+
+The test job runs against three Kubernetes versions — the floor the chart's
+`kubeVersion` claims, a middle one, and the newest — because claiming
+`>=1.27.0-0` without ever running against 1.27 is a guess rather than a claim.
+
+It also asserts that the controller and chart suites *actually ran*. Both skip
+when their dependency is missing, and a green run that silently skipped the two
+most valuable suites is worse than a red one.
 
 ## How the tests are layered
 

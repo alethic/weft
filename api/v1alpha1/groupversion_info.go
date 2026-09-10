@@ -11,8 +11,9 @@
 package v1alpha1
 
 import (
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"sigs.k8s.io/controller-runtime/pkg/scheme"
 
 	"github.com/alethic/weft/internal/naming"
 )
@@ -21,9 +22,24 @@ var (
 	// GroupVersion is the group version used to register these objects.
 	GroupVersion = schema.GroupVersion{Group: naming.Group, Version: naming.Version}
 
-	// SchemeBuilder is used to add go types to the GroupVersionKind scheme.
-	SchemeBuilder = &scheme.Builder{GroupVersion: GroupVersion}
+	// SchemeBuilder registers the types in this group-version.
+	//
+	// This is apimachinery's builder rather than controller-runtime's, which is
+	// deprecated for api packages: an api package should be cheap to import,
+	// and pulling controller-runtime in makes it anything but.
+	SchemeBuilder = &runtime.SchemeBuilder{}
 
 	// AddToScheme adds the types in this group-version to the given scheme.
 	AddToScheme = SchemeBuilder.AddToScheme
 )
+
+// addKnownTypes registers every type in this group-version.
+func addKnownTypes(s *runtime.Scheme) error {
+	s.AddKnownTypes(GroupVersion, &Weave{}, &WeaveList{})
+	metav1.AddToGroupVersion(s, GroupVersion)
+	return nil
+}
+
+func init() {
+	SchemeBuilder.Register(addKnownTypes)
+}

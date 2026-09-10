@@ -1,0 +1,37 @@
+name: Feature request
+description: Something Weft should be able to do and cannot.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you are trying to do
+      description: >
+        The composition you are trying to write, or the situation you are
+        trying to handle. Describe the problem rather than the solution; the
+        interesting features so far came from real compositions that could not
+        be expressed.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What you do instead today
+      description: And why it is unsatisfactory.
+
+  - type: checkboxes
+    id: properties
+    attributes:
+      label: Compatibility with the two properties
+      description: >
+        See the README. A feature that needs either of these relaxed is a
+        different project, so it is worth checking before we both spend time on
+        it.
+      options:
+        - label: >
+            This does not require a cluster-scoped object to be created at
+            runtime, or a platform team to be in the loop.
+        - label: >
+            This does not require Weft to read or write anything as itself
+            rather than as the Weave's ServiceAccount.

@@ -1,0 +1,8 @@
+# Default owner for everything.
+*                       @alethic
+
+# The two properties the project is built on. A change here is a change to what
+# Weft is, not a refactor: see the "not negotiable" section of CONTRIBUTING.md.
+/internal/kube/         @alethic
+/charts/weft/templates/rbac.yaml  @alethic
+/SECURITY.md            @alethic

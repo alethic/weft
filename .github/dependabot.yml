@@ -1,0 +1,42 @@
+version: 2
+
+updates:
+  # A controller that holds impersonation rights should not sit on a stale
+  # dependency, so this is weekly rather than monthly.
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      # Kubernetes libraries move together; separate PRs for each would not
+      # build and would each need the others to land first.
+      kubernetes:
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      golang-x:
+        patterns:
+          - "golang.org/x/*"
+    commit-message:
+      prefix: "deps"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "build"

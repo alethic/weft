@@ -5,26 +5,38 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
 	"sync"
 
-	"go.starlark.net/resolve"
 	"go.starlark.net/starlark"
 	"go.starlark.net/syntax"
 )
 
-func init() {
-	// A composition author is untrusted by assumption, so the language is
-	// bounded rather than trusted. Recursion in particular turns a step budget
-	// into a stack-depth problem, which is not something a step budget catches.
-	resolve.AllowRecursion = false
-	// Reassigning globals mid-module makes a program's meaning depend on
-	// evaluation order for no benefit here.
-	resolve.AllowGlobalReassign = false
+// fileOptions bounds the language, per compilation.
+//
+// The equivalent resolve.Allow* variables are process-global, so setting them
+// would reach every other user of Starlark in the binary and be reachable by
+// them in turn. A guarantee that another library can switch off is not a
+// guarantee, and untrusted authorship is the premise here.
+//
+// Zero values are the restrictive ones. Recursion in particular is named
+// backwards: it disables the recursion *check*, and leaving it false is what
+// keeps a program from turning a step budget into a stack-depth problem, which
+// a step budget does not catch.
+var fileOptions = &syntax.FileOptions{
 	// Sets are pure and occasionally useful for deduplication.
-	resolve.AllowSet = true
+	Set: true,
+	// while and top-level control flow add nothing a comprehension or a
+	// function cannot express, and both make a program harder to bound.
+	While:           false,
+	TopLevelControl: false,
+	// Reassigning globals mid-module makes a program's meaning depend on
+	// evaluation order, for no benefit.
+	GlobalReassign: false,
+	Recursion:      false,
 }
 
 // Options bounds an evaluation.
@@ -166,12 +178,13 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 		return nil, programErrorf(ReasonNoComposeFunc,
 			"program does not define compose(inputs, sources, observed)")
 	}
-	if _, callable := composeFn.(starlark.Callable); !callable {
+	callable, isCallable := composeFn.(starlark.Callable)
+	if !isCallable {
 		return nil, programErrorf(ReasonNoComposeFunc,
 			"compose must be a function, got %s", composeFn.Type())
 	}
 
-	ret, err := starlark.Call(thread, composeFn.(starlark.Callable),
+	ret, err := starlark.Call(thread, callable,
 		starlark.Tuple{inputsV, sourcesV, observedV}, nil)
 	if err != nil {
 		return s.classify(ctx, thread, err)
@@ -216,7 +229,7 @@ func (s *Starlark) classify(ctx context.Context, thread *starlark.Thread, err er
 
 	pe := &ProgramError{Reason: ReasonRuntimeError, Msg: err.Error()}
 	var evalErr *starlark.EvalError
-	if errorsAs(err, &evalErr) {
+	if errors.As(err, &evalErr) {
 		pe.Msg = evalErr.Msg
 		pe.Backtrace = evalErr.Backtrace()
 	}
@@ -330,10 +343,14 @@ func (s *Starlark) program(src string) (*starlark.Program, error) {
 
 	s.mu.Lock()
 	if el, ok := s.cache[hash]; ok {
-		s.lru.MoveToFront(el)
-		prog := el.Value.(*cacheEntry).prog
-		s.mu.Unlock()
-		return prog, nil
+		// A checked assertion, so an impossible value is a cache miss and a
+		// recompile rather than a panic that takes down the reconcile.
+		if entry, ok := el.Value.(*cacheEntry); ok {
+			s.lru.MoveToFront(el)
+			prog := entry.prog
+			s.mu.Unlock()
+			return prog, nil
+		}
 	}
 	s.mu.Unlock()
 
@@ -345,21 +362,25 @@ func (s *Starlark) program(src string) (*starlark.Program, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if el, ok := s.cache[hash]; ok {
-		s.lru.MoveToFront(el)
-		return el.Value.(*cacheEntry).prog, nil
+		if entry, ok := el.Value.(*cacheEntry); ok {
+			s.lru.MoveToFront(el)
+			return entry.prog, nil
+		}
 	}
 	el := s.lru.PushFront(&cacheEntry{hash: hash, prog: prog})
 	s.cache[hash] = el
 	for s.lru.Len() > s.opts.CacheSize {
 		oldest := s.lru.Back()
 		s.lru.Remove(oldest)
-		delete(s.cache, oldest.Value.(*cacheEntry).hash)
+		if evicted, ok := oldest.Value.(*cacheEntry); ok {
+			delete(s.cache, evicted.hash)
+		}
 	}
 	return prog, nil
 }
 
 func compile(src string) (*starlark.Program, error) {
-	f, err := syntax.Parse("compose.star", []byte(src), 0)
+	f, err := fileOptions.Parse("compose.star", []byte(src), 0)
 	if err != nil {
 		return nil, &ProgramError{Reason: ReasonSyntaxError, Msg: err.Error()}
 	}
@@ -380,21 +401,4 @@ func compile(src string) (*starlark.Program, error) {
 		return nil, &ProgramError{Reason: ReasonSyntaxError, Msg: err.Error()}
 	}
 	return prog, nil
-}
-
-// errorsAs is errors.As, kept local so the import set of this file stays
-// obvious about what it depends on.
-func errorsAs(err error, target **starlark.EvalError) bool {
-	for err != nil {
-		if e, ok := err.(*starlark.EvalError); ok {
-			*target = e
-			return true
-		}
-		u, ok := err.(interface{ Unwrap() error })
-		if !ok {
-			return false
-		}
-		err = u.Unwrap()
-	}
-	return false
 }

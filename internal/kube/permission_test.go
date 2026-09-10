@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -24,8 +25,8 @@ func TestPermissionErrorIsActionable(t *testing.T) {
 		schema.GroupVersionResource{Group: "azure.m.upbound.io", Version: "v1beta1", Resource: "resourcegroups"},
 		"ResourceGroup", "sweep-env")
 
-	perm, ok := err.(*PermissionError)
-	if !ok {
+	var perm *PermissionError
+	if !errors.As(err, &perm) {
 		t.Fatalf("got %T, want *PermissionError", err)
 	}
 
@@ -90,7 +91,7 @@ func TestCoreGroupResourceName(t *testing.T) {
 // refusal forever.
 func TestNonForbiddenErrorsPassThrough(t *testing.T) {
 	notFound := apierrors.NewNotFound(schema.GroupResource{Resource: "configmaps"}, "x")
-	if got := asPermissionError(notFound, "ns", "sa", "get", schema.GroupVersionResource{}, "ConfigMap", "x"); got != notFound {
+	if got := asPermissionError(notFound, "ns", "sa", "get", schema.GroupVersionResource{}, "ConfigMap", "x"); !errors.Is(got, notFound) {
 		t.Errorf("NotFound was rewrapped as %T", got)
 	}
 	if got := asPermissionError(nil, "ns", "sa", "get", schema.GroupVersionResource{}, "ConfigMap", "x"); got != nil {
@@ -98,7 +99,8 @@ func TestNonForbiddenErrorsPassThrough(t *testing.T) {
 	}
 
 	timeout := apierrors.NewTimeoutError("slow", 1)
-	if _, isPerm := asPermissionError(timeout, "ns", "sa", "get", schema.GroupVersionResource{}, "ConfigMap", "x").(*PermissionError); isPerm {
+	var asPerm *PermissionError
+	if errors.As(asPermissionError(timeout, "ns", "sa", "get", schema.GroupVersionResource{}, "ConfigMap", "x"), &asPerm) {
 		t.Error("a timeout should not be reported as a permission problem")
 	}
 }

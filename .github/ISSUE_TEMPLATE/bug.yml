@@ -1,0 +1,72 @@
+name: Bug report
+description: Something behaves differently than documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: if a `Weave` is Degraded with a `Forbidden` reason, the
+        condition message names the exact verb and resource that is missing and
+        gives you the two commands to grant it. That is working as intended
+        rather than a bug.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: And what you expected instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: weave
+    attributes:
+      label: The Weave
+      description: >
+        The full object, with anything sensitive redacted. The program matters
+        as much as the spec.
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: status
+    attributes:
+      label: Its status
+      description: "`kubectl get weave <name> -o yaml | yq .status`, or the whole object."
+      render: yaml
+    validations:
+      required: true
+
+  - type: textarea
+    id: rbac
+    attributes:
+      label: What the ServiceAccount can do
+      description: >
+        Weft does exactly what `spec.serviceAccountName` may do, so this is
+        usually the answer. Output of:
+        `kubectl auth can-i --list --as=system:serviceaccount:<ns>:<sa> -n <ns>`
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Weft version
+      description: "`kubectl -n weft-system exec deploy/weft -- /weft version`"
+    validations:
+      required: true
+
+  - type: input
+    id: kubernetes
+    attributes:
+      label: Kubernetes version
+      description: "`kubectl version -o json | jq -r .serverVersion.gitVersion`"
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Controller logs
+      description: "`kubectl -n weft-system logs deploy/weft`, the relevant part."
+      render: shell

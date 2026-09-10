@@ -41,8 +41,8 @@ func parsePath(path string) ([]segment, error) {
 	i := 0
 	expectSep := false
 	for i < len(path) {
-		switch {
-		case path[i] == '.':
+		switch path[i] {
+		case '.':
 			if !expectSep {
 				return nil, fmt.Errorf("unexpected %q at position %d in path %q", ".", i, path)
 			}
@@ -51,7 +51,7 @@ func parsePath(path string) ([]segment, error) {
 			if i == len(path) {
 				return nil, fmt.Errorf("path %q ends with a separator", path)
 			}
-		case path[i] == '[':
+		case '[':
 			s, n, err := parseBracket(path[i:])
 			if err != nil {
 				return nil, fmt.Errorf("in path %q: %w", path, err)

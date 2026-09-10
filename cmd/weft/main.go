@@ -176,8 +176,13 @@ func runManager(args []string) error {
 		Factory:   factory,
 		Evaluator: eval.NewStarlark(cfg.evalOpt),
 		Watches:   registry,
-		Recorder:  mgr.GetEventRecorderFor(naming.Group),
-		Opts:      cfg.opts,
+		// The newer events API would also change the RBAC this controller
+		// needs, from events in the core group to events.k8s.io, and getting
+		// that wrong makes events silently disappear. Migrating is a change of
+		// its own, not a drive-by.
+		//nolint:staticcheck // SA1019: deliberate; see above.
+		Recorder: mgr.GetEventRecorderFor(naming.Group),
+		Opts:     cfg.opts,
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		return fmt.Errorf("registering controller: %w", err)
