@@ -184,9 +184,12 @@ ordering violation.
 Before uninstalling the controller, release everything it has placed:
 
 ```bash
-weft reap --dry-run
-weft reap
+kubectl -n weft-system exec deploy/weft -- /weft reap --dry-run
+kubectl -n weft-system exec deploy/weft -- /weft reap
 ```
+
+The image is distroless and has no shell, but this execs the binary directly so
+it needs none. Running the binary locally against your kubecontext works too.
 
 Anything missed carries a finalizer beginning `weft.run/src-`, which is a fixed
 prefix precisely so a human can find them:
