@@ -41,6 +41,14 @@ limit fails as a condition on the `Weave` rather than as a wedged controller.
 cannot be cluster-scoped, and cannot set their own owner references. These are
 rejected rather than corrected.
 
+**Taking over a resource by naming it.** Server-side apply is create-or-update,
+so a program naming an object that already exists would otherwise adopt it
+silently — and deleting the `Weave` would then delete something it never made.
+Weft refuses instead. Handing an object over requires an annotation *on that
+object* naming the `Weave`, so consent comes from whoever holds the resource
+rather than from whoever wrote the program. See
+[docs/ownership.md](docs/ownership.md).
+
 ### What Weft does not prevent
 
 **A ServiceAccount that is over-granted.** Weft faithfully performs whatever its

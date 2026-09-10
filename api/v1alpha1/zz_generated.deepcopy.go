@@ -164,6 +164,13 @@ func (in *WeaveStatus) DeepCopyInto(out *WeaveStatus) {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.Superseded != nil {
+		in, out := &in.Superseded, &out.Superseded
+		*out = make([]InventoryEntry, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.Sources != nil {
 		in, out := &in.Sources, &out.Sources
 		*out = make([]SourceStatus, len(*in))

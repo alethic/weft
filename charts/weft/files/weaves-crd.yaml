@@ -318,6 +318,81 @@ spec:
                 x-kubernetes-list-map-keys:
                 - id
                 x-kubernetes-list-type: map
+              superseded:
+                description: |-
+                  Superseded are objects this Weave created and no longer describes, which
+                  are waiting to be deleted.
+
+                  They arrive here when a program is edited to change the name or kind
+                  under a key it still returns. The new object is recorded in the inventory
+                  under that key, so the old one has nowhere left to be recorded and would
+                  otherwise be orphaned - present in the cluster, absent from every record,
+                  never cleaned up. This is an atomic list rather than a map because an
+                  entry here shares its key with the live object that replaced it.
+                items:
+                  description: InventoryEntry records one resource this Weave created.
+                  properties:
+                    apiVersion:
+                      description: |-
+                        APIVersion, Kind and Name identify the live object. Its namespace is
+                        always the Weave's own.
+                      type: string
+                    key:
+                      description: |-
+                        Key is the stable identity: the key compose() returned this resource
+                        under. Never positional, so reordering a list cannot rename a live
+                        object.
+                      type: string
+                    kind:
+                      type: string
+                    missingCount:
+                      description: |-
+                        MissingCount is the number of consecutive successful evaluations in
+                        which this resource was not returned.
+
+                        It stops climbing once it reaches the threshold. That is not cosmetic:
+                        a status write wakes the Weave through its own watch, so a field that
+                        changes on every pass is a self-sustaining reconcile loop.
+                      format: int32
+                      type: integer
+                    missingSince:
+                      description: |-
+                        MissingSince is when this resource first stopped being returned by a
+                        successful evaluation, and is cleared the moment it comes back.
+
+                        Pruning waits on elapsed time, not only on a count. Reconciles are
+                        event-driven and the applies in a single pass generate watch events of
+                        their own, so several "consecutive evaluations" can complete inside a
+                        second - which is no protection at all against the thing hysteresis
+                        exists for. A managed resource drops its status for as long as its
+                        provider takes to restart, and a program waiting on that status
+                        legitimately stops returning whatever depends on it for that whole
+                        period. Only a clock measures that.
+                      format: date-time
+                      type: string
+                    name:
+                      type: string
+                    uid:
+                      description: |-
+                        UID of the applied object, recorded so teardown can tell a resource we
+                        created from a later resource that happens to share its name.
+                      type: string
+                    wave:
+                      description: |-
+                        Wave is the apply order. Resources are applied in ascending wave and
+                        deleted in descending wave, because cascading garbage collection is
+                        unordered and self-reference creates a real internal DAG.
+                      format: int32
+                      type: integer
+                  required:
+                  - apiVersion
+                  - key
+                  - kind
+                  - name
+                  - wave
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
             type: object
         type: object
     served: true

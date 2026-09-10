@@ -148,6 +148,25 @@ all, so the identity everything depends on would never be created and the
 composition could never advance past it. `pending()` applies what is ready and
 still reports what is outstanding.
 
+### Weft manages only what it made
+
+A program that names an object which already exists is refused, not granted it.
+Server-side apply is create-or-update, so applying would add Weft's owner
+reference and deleting the `Weave` would then delete a resource Weft never
+created. Choosing a name should not be enough to do that.
+
+Handing an existing resource over is deliberate, and the consent lives on the
+object rather than in the `Weave` — otherwise "onboarding" would just be a
+program author helping themselves:
+
+```bash
+kubectl annotate configmap legacy weft.run/adopt=<weave-name>
+```
+
+From then on that `Weave` manages it, and deleting the `Weave` deletes it.
+[docs/ownership.md](docs/ownership.md) covers the whole story, including what
+happens when a program is edited to change what a key addresses.
+
 ### Identity is the key, not the position
 
 The keys of the returned mapping are the inventory identity. Reordering a list
@@ -236,6 +255,10 @@ Notable flags:
 | `--teardown-timeout` | `15m` | how long ordered teardown runs before cascading collection takes over |
 | `--impersonate-groups` | `system:serviceaccounts,system:authenticated` | see [docs/rbac.md](docs/rbac.md) |
 | `--max-steps` | `20000000` | the execution budget for one `compose()` |
+
+Editing a `Weave` converges: what the program stopped returning is pruned, what
+it started returning is applied, and what it changed under a stable key is
+replaced rather than left behind. See [docs/ownership.md](docs/ownership.md).
 
 ### Uninstalling
 

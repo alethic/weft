@@ -23,6 +23,7 @@ const (
 	ReasonApplyFailed      = "ApplyFailed"
 	ReasonTearingDown      = "TearingDown"
 	ReasonWatchDegraded    = "WatchDegraded"
+	ReasonNotOurs          = "ResourceNotOurs"
 )
 
 // maxMessage keeps a condition inside the API server's limit with room to

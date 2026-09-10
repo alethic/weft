@@ -438,3 +438,121 @@ func TestMissingCountStopsAtTheThreshold(t *testing.T) {
 		t.Errorf("MissingCount = %d after 20 passes, want it capped at the threshold of 3", last.MissingCount)
 	}
 }
+
+// A key is the identity of an entry; what it addresses is a separate thing.
+// Editing a program to change a name or a kind under a key it still returns
+// leaves the old object behind, and the inventory records the new one in its
+// place - so nothing would ever look at the old one again. That is the orphan
+// the cron-and-template arrangement produced, and the reason it needed manual
+// reclaiming.
+func TestComputeDetectsReplacedObjects(t *testing.T) {
+	current := []v1alpha1.InventoryEntry{{
+		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing-one", Wave: 0,
+	}}
+
+	// Same key, different name.
+	renamed, err := Build([]eval.Resource{
+		{Key: "thing", Object: res("thing-two")},
+	}, "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := Compute(current, renamed, 3, testDelay, time.Now())
+	if len(d.Replaced) != 1 || d.Replaced[0].Name != "thing-one" {
+		t.Fatalf("the old object should be marked for removal, got %+v", d.Replaced)
+	}
+	if len(d.Prune) != 0 || len(d.Retained) != 0 {
+		t.Error("a replacement is not an absence, so no hysteresis applies")
+	}
+}
+
+func TestComputeDetectsChangedKind(t *testing.T) {
+	current := []v1alpha1.InventoryEntry{{
+		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0,
+	}}
+
+	asSecret := map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Secret",
+		"metadata":   map[string]any{"name": "thing"},
+	}
+	desired, err := Build([]eval.Resource{{Key: "thing", Object: asSecret}}, "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := Compute(current, desired, 3, testDelay, time.Now())
+	if len(d.Replaced) != 1 || d.Replaced[0].Kind != "ConfigMap" {
+		t.Fatalf("changing the kind under a key must remove the old object, got %+v", d.Replaced)
+	}
+}
+
+// The opposite mistake: an object that moved to a different key has not gone
+// anywhere. Pruning it would destroy something the program still asks for, and
+// the apply under the new key would then have to recreate it.
+func TestComputeDoesNotPruneARekeyedObject(t *testing.T) {
+	current := []v1alpha1.InventoryEntry{{
+		Key: "old-key", APIVersion: "v1", Kind: "ConfigMap", Name: "shared", Wave: 0,
+	}}
+
+	desired, err := Build([]eval.Resource{
+		{Key: "new-key", Object: res("shared")},
+	}, "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := Compute(current, desired, 1, 0, time.Now())
+	if len(d.Prune) != 0 {
+		t.Errorf("the object is still wanted, under another key; deleting it would destroy live state: %+v", d.Prune)
+	}
+	if len(d.Replaced) != 0 {
+		t.Errorf("nothing was replaced: %+v", d.Replaced)
+	}
+}
+
+// An unchanged key addressing an unchanged object is neither replaced nor
+// pruned, or a steady state would churn.
+func TestComputeIgnoresUnchangedEntries(t *testing.T) {
+	current := []v1alpha1.InventoryEntry{{
+		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0,
+	}}
+	desired, err := Build([]eval.Resource{{Key: "thing", Object: res("thing")}}, "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := Compute(current, desired, 3, testDelay, time.Now())
+	if len(d.Replaced) != 0 || len(d.Prune) != 0 || len(d.Retained) != 0 {
+		t.Errorf("nothing should have moved: %+v", d)
+	}
+}
+
+// Replacements come out highest wave first, so several of them are removed in
+// the same reverse order everything else is.
+func TestReplacedIsOrdered(t *testing.T) {
+	current := []v1alpha1.InventoryEntry{
+		{Key: "a", APIVersion: "v1", Kind: "ConfigMap", Name: "a-old", Wave: 0},
+		{Key: "b", APIVersion: "v1", Kind: "ConfigMap", Name: "b-old", Wave: 1},
+		{Key: "c", APIVersion: "v1", Kind: "ConfigMap", Name: "c-old", Wave: 2},
+	}
+	desired, err := Build([]eval.Resource{
+		{Key: "a", Object: res("a-new")},
+		{Key: "b", Object: res("b-new")},
+		{Key: "c", Object: res("c-new")},
+	}, "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	d := Compute(current, desired, 3, testDelay, time.Now())
+	if len(d.Replaced) != 3 {
+		t.Fatalf("got %d replacements", len(d.Replaced))
+	}
+	for i, want := range []string{"c-old", "b-old", "a-old"} {
+		if d.Replaced[i].Name != want {
+			t.Errorf("position %d = %q, want %q", i, d.Replaced[i].Name, want)
+		}
+	}
+}

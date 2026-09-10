@@ -77,7 +77,7 @@ func newHarness(t *testing.T, tune func(*Options)) *harness {
 		ObjectMeta: metav1.ObjectMeta{Name: "composer", Namespace: ns},
 		Rules: []rbacv1.PolicyRule{{
 			APIGroups: []string{""},
-			Resources: []string{"configmaps"},
+			Resources: []string{"configmaps", "secrets"},
 			Verbs:     []string{"get", "list", "watch", "create", "update", "patch", "delete"},
 		}},
 	}); err != nil {

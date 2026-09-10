@@ -21,12 +21,22 @@ import (
 // a partial apply is still recorded: an unrecorded resource is an orphan, and
 // orphans were the single worst property of the cron-and-template arrangement
 // this replaces.
-func (r *WeaveReconciler) applyAll(ctx context.Context, c *kube.Client, items []inventory.Item) ([]v1alpha1.InventoryEntry, error) {
+func (r *WeaveReconciler) applyAll(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, items []inventory.Item) ([]v1alpha1.InventoryEntry, error) {
 	applied := make([]v1alpha1.InventoryEntry, 0, len(items))
 
 	for _, wave := range inventory.ApplyWaves(items) {
 		var waveErr error
 		for _, item := range wave {
+			// Refuse before writing, not after. Server-side apply is
+			// create-or-update, so by the time it returns the takeover has
+			// already happened.
+			if err := r.checkOwnership(ctx, c, weave, item); err != nil {
+				if waveErr == nil {
+					waveErr = err
+				}
+				continue
+			}
+
 			out, err := c.Apply(ctx, item.Object)
 			if err != nil {
 				metrics.AppliesTotal.WithLabelValues("error").Inc()

@@ -195,6 +195,10 @@ Each value must carry `apiVersion`, `kind` and `metadata.name`.
 Weft adds a `weft.run/weave` label and a `weft.run/key` annotation to everything
 it creates, so `kubectl get <kind> -l weft.run/weave=<name>` works.
 
+A resource that already exists and was not created by this `Weave` is refused
+rather than taken over, unless the object itself carries
+`weft.run/adopt: <weave-name>`. See [ownership.md](ownership.md).
+
 ## Worked example
 
 Two phases and a fan-out, which between them cover most of what compositions do:

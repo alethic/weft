@@ -77,6 +77,15 @@ var (
 	// WaveAnnotation optionally overrides a resource's teardown wave. Lower
 	// waves are applied first and deleted last.
 	WaveAnnotation = Group + "/wave"
+
+	// AdoptAnnotation opts an existing object into being taken over by a Weave,
+	// and its value is the name of the Weave allowed to do so.
+	//
+	// It lives on the object being adopted rather than in the Weave on purpose.
+	// Consent has to come from whoever holds the thing, or "adoption" is just a
+	// Weave author choosing a name and helping themselves to somebody else's
+	// resource - which is the whole reason the unannotated case is refused.
+	AdoptAnnotation = Group + "/adopt"
 )
 
 // ConditionType values published on Weave.status.conditions.

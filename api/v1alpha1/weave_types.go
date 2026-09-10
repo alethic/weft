@@ -200,6 +200,20 @@ type WeaveStatus struct {
 	// +listMapKey=key
 	Inventory []InventoryEntry `json:"inventory,omitempty"`
 
+	// Superseded are objects this Weave created and no longer describes, which
+	// are waiting to be deleted.
+	//
+	// They arrive here when a program is edited to change the name or kind
+	// under a key it still returns. The new object is recorded in the inventory
+	// under that key, so the old one has nowhere left to be recorded and would
+	// otherwise be orphaned - present in the cluster, absent from every record,
+	// never cleaned up. This is an atomic list rather than a map because an
+	// entry here shares its key with the live object that replaced it.
+	//
+	// +optional
+	// +listType=atomic
+	Superseded []InventoryEntry `json:"superseded,omitempty"`
+
 	// Sources carries per-source bookkeeping for finalized sources.
 	//
 	// +optional

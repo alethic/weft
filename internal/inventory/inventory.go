@@ -93,6 +93,38 @@ type Diff struct {
 
 	// Prune is inventory absent for long enough to delete, in descending wave.
 	Prune []v1alpha1.InventoryEntry
+
+	// Replaced is inventory whose key is still returned but which now names a
+	// different object, because the program was edited to change a name or a
+	// kind under a stable key.
+	//
+	// The old object has to be deleted or it is orphaned: the inventory records
+	// the new one under that key and nothing remembers the old, which is
+	// exactly the failure of applying without pruning. No hysteresis applies -
+	// the program said the object is different, which is a statement rather
+	// than an absence.
+	Replaced []v1alpha1.InventoryEntry
+}
+
+// objectID is what an inventory entry actually addresses, as distinct from the
+// key that identifies it.
+type objectID struct {
+	apiVersion string
+	kind       string
+	name       string
+}
+
+func idOfEntry(e v1alpha1.InventoryEntry) objectID {
+	return objectID{apiVersion: e.APIVersion, kind: e.Kind, name: e.Name}
+}
+
+func idOfItem(i Item) objectID {
+	gvk := i.GroupVersionKind()
+	return objectID{
+		apiVersion: gvk.GroupVersion().String(),
+		kind:       gvk.Kind,
+		name:       i.Object.GetName(),
+	}
 }
 
 // Compute diffs a desired set against the recorded inventory.
@@ -116,16 +148,32 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 		threshold = 1
 	}
 
-	wanted := make(map[string]bool, len(desired))
-	for _, d := range desired {
-		wanted[d.Key] = true
+	wanted := make(map[string]objectID, len(desired))
+	claimed := make(map[objectID]bool, len(desired))
+	for _, item := range desired {
+		id := idOfItem(item)
+		wanted[item.Key] = id
+		claimed[id] = true
 	}
 
 	d := Diff{Apply: append([]Item(nil), desired...)}
 	sort.SliceStable(d.Apply, func(i, j int) bool { return d.Apply[i].Wave < d.Apply[j].Wave })
 
 	for _, e := range current {
-		if wanted[e.Key] {
+		if id, ok := wanted[e.Key]; ok {
+			// The key survived, but check what it now addresses. An edit that
+			// changes a name or a kind under a stable key leaves the old object
+			// behind, and nothing would ever look at it again.
+			if idOfEntry(e) != id {
+				d.Replaced = append(d.Replaced, e)
+			}
+			continue
+		}
+
+		// The key is gone, but the object it addressed may have been re-keyed
+		// rather than dropped. Deleting it would destroy something the program
+		// still asks for; the new key owns the record now.
+		if claimed[idOfEntry(e)] {
 			continue
 		}
 		// Capped, because status writes wake the Weave through its own watch
@@ -144,6 +192,7 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 		}
 	}
 	sortDescending(d.Prune)
+	sortDescending(d.Replaced)
 	return d
 }
 

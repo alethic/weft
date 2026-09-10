@@ -1,0 +1,189 @@
+package controller
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+
+	"github.com/alethic/weft/api/v1alpha1"
+	"github.com/alethic/weft/internal/inventory"
+	"github.com/alethic/weft/internal/kube"
+	"github.com/alethic/weft/internal/naming"
+)
+
+// checkOwnership refuses to write over an object this Weave did not create.
+//
+// Server-side apply is create-or-update, so without this a program that names
+// an object somebody else already owns would silently take it over: the apply
+// adds Weft's owner reference, and deleting the Weave then deletes a resource
+// Weft never made. That is a lot of damage to do by choosing a name.
+//
+// The check runs only for resources not already recorded in the inventory. In a
+// steady state nothing here costs a request; it is the first apply of a key, or
+// an apply after the program changed what a key addresses, that pays for one
+// Get.
+func (r *WeaveReconciler) checkOwnership(
+	ctx context.Context,
+	c *kube.Client,
+	weave *v1alpha1.Weave,
+	item inventory.Item,
+) error {
+	// Already ours under this key, and still addressing the same object.
+	if e, ok := weave.Status.InventoryByKey(item.Key); ok && sameObject(e, item) {
+		return nil
+	}
+
+	gvk := item.GroupVersionKind()
+	name := item.Object.GetName()
+
+	existing, err := c.Get(ctx, gvk, name)
+	switch {
+	case apierrors.IsNotFound(err):
+		// Nothing there. This is a create, which is the ordinary case.
+		return nil
+	case err != nil:
+		var perm *kube.PermissionError
+		if errors.As(err, &perm) {
+			// The ServiceAccount cannot read what it is about to write. That is
+			// its own problem and is reported as one, rather than being taken
+			// as permission to overwrite blindly.
+			return degradedf(ReasonForbidden,
+				"checking whether %q already exists before creating it:\n%s", item.Key, perm.Error())
+		}
+		var unknown *kube.UnknownKindError
+		if errors.As(err, &unknown) {
+			// Reported properly by the apply itself.
+			return nil
+		}
+		var scoped *kube.ClusterScopedError
+		if errors.As(err, &scoped) {
+			return nil
+		}
+		return fmt.Errorf("checking whether %q already exists: %w", item.Key, err)
+	}
+
+	owner := weftOwner(existing, weave)
+	switch {
+	case owner.otherWeave != "":
+		// Another Weave owns it and would keep re-applying it. Adoption cannot
+		// resolve that; the two would simply fight over the object.
+		return degradedf(ReasonNotOurs,
+			"resource %q would create %s %q, which the Weave %q already owns. Two Weaves cannot manage one "+
+				"object: they would apply over each other on every reconcile. Remove it from one of them.",
+			item.Key, gvk.Kind, name, owner.otherWeave)
+
+	case !owner.ours && !owner.adoptableBy(weave.Name):
+		return degradedf(ReasonNotOurs, "%s", adoptionMessage(item, existing, owner, weave.Name))
+
+	case !owner.ours:
+		// Consented to, so take it. Worth an event: ownership is a one-way door
+		// in the sense that deleting the Weave will now delete this object.
+		r.eventf(weave, "Normal", "Adopted",
+			"took ownership of %s %q, which was annotated %s=%s. Deleting this Weave now deletes it.",
+			gvk.Kind, name, naming.AdoptAnnotation, weave.Name)
+		return nil
+
+	case owner.key != "" && owner.key != item.Key:
+		// Ours, but two keys are claiming one object. Whichever applied last
+		// would win and the other would be recorded pointing at something it
+		// does not control.
+		return degradedf(ReasonNotOurs,
+			"resources %q and %q both produce %s %q. A key is the identity of an object, so two of them "+
+				"cannot name one: whichever applies last would win, and the other would be recorded "+
+				"pointing at something it does not control.",
+			owner.key, item.Key, gvk.Kind, name)
+	}
+
+	// Ours, under this key, but the inventory did not know - a status that was
+	// lost or rolled back. Reclaiming it is right: it is our object.
+	return nil
+}
+
+// weftOwnership is what an existing object says about who made it.
+type weftOwnership struct {
+	// ours is true when this Weave already owns the object.
+	ours bool
+	// key is the inventory key it was created under, when Weft made it.
+	key string
+	// otherWeave names a different Weave that owns it, when one does.
+	otherWeave string
+	// manager is whichever field manager last wrote it, when nobody owns it.
+	manager string
+	// adopt is the value of the adopt annotation, when it carries one.
+	adopt string
+}
+
+// adoptableBy reports whether the object has consented to being taken over by
+// the named Weave.
+func (o weftOwnership) adoptableBy(weave string) bool {
+	return o.adopt != "" && o.adopt == weave
+}
+
+// weftOwner reports whether an object was created by this Weave.
+//
+// The owner reference is what decides it, because that is what garbage
+// collection acts on. The label and annotation are read only to describe what
+// was found.
+func weftOwner(obj *unstructured.Unstructured, weave *v1alpha1.Weave) weftOwnership {
+	annotations := obj.GetAnnotations()
+	out := weftOwnership{
+		key:   annotations[naming.KeyAnnotation],
+		adopt: annotations[naming.AdoptAnnotation],
+	}
+
+	for _, ref := range obj.GetOwnerReferences() {
+		if ref.UID == weave.UID {
+			out.ours = true
+			return out
+		}
+		if ref.Kind == naming.Kind && ref.APIVersion == naming.GroupVersion {
+			// Another Weave's. Name it, since that is the useful thing to say.
+			out.otherWeave = ref.Name
+			return out
+		}
+	}
+
+	if managers := obj.GetManagedFields(); len(managers) > 0 {
+		out.manager = managers[0].Manager
+	}
+	return out
+}
+
+// adoptionMessage explains the refusal and what to do about it.
+func adoptionMessage(item inventory.Item, existing *unstructured.Unstructured, owner weftOwnership, ownerName string) string {
+	gvk := item.GroupVersionKind()
+	msg := fmt.Sprintf("resource %q would create %s %q, which already exists and this Weave did not create.",
+		item.Key, gvk.Kind, item.Object.GetName())
+
+	if owner.manager != "" {
+		msg += fmt.Sprintf("\n\nIt was last written by %q.", owner.manager)
+	}
+	if owner.adopt != "" {
+		msg += fmt.Sprintf("\n\nIt is annotated for adoption by the Weave %q, which is not this one.", owner.adopt)
+	}
+
+	msg += "\n\nWeft will not take over an object it did not create. Applying would add its owner " +
+		"reference, and deleting this Weave would then delete something it never made.\n\n" +
+		"To hand it over deliberately, annotate the object itself. Consent belongs to whoever holds " +
+		"the resource, not to whoever wrote the program:\n" +
+		fmt.Sprintf("  kubectl -n %s annotate %s %s %s=%s\n\n",
+			existing.GetNamespace(), gvk.Kind, item.Object.GetName(),
+			naming.AdoptAnnotation, ownerName) +
+		"From then on this Weave manages it, and deleting the Weave deletes it. Otherwise change the " +
+		"name the program produces, or remove what is there:\n" +
+		fmt.Sprintf("  kubectl -n %s delete %s %s",
+			existing.GetNamespace(), gvk.Kind, item.Object.GetName())
+	return msg
+}
+
+// sameObject reports whether an inventory entry addresses the same object as an
+// item. The key identifies the entry; this is what the entry points at.
+func sameObject(e *v1alpha1.InventoryEntry, item inventory.Item) bool {
+	gvk := item.GroupVersionKind()
+	return e.APIVersion == gvk.GroupVersion().String() &&
+		e.Kind == gvk.Kind &&
+		e.Name == item.Object.GetName()
+}
