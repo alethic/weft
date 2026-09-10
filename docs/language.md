@@ -13,8 +13,9 @@ def compose(variable, observed):
 | argument | is |
 |---|---|
 | `variable` | `spec.variables`, assembled into one mapping. Keys, not resources. |
-| `sources` | declared sources by id, resolved through an impersonated read. A source that does not exist is `None`, and whether that should block is the program's decision. |
-| `observed` | resources this Weave previously created, keyed by inventory key, read back live with current status. |
+| `observed` | resources this `Weave` previously created, keyed by inventory key, read back live with current status. |
+
+Everything else in the namespace is reached with `read()` and `select()`.
 
 The return value is a mapping of **stable key** to resource. The key is the
 identity of the live object: reordering the mapping cannot rename anything, and
@@ -33,26 +34,26 @@ return wait("...")    # cannot proceed at all yet, and here is why
 `fail("...")` reports a permanent error and lands on the `Degraded` condition
 with a backtrace.
 
-### Gating on a source
+### Gating on a resource
 
-A source that does not exist resolves to `None`, so an ordering edge — a
-resource that must exist before anything is created, even though no field is
+A read of something that does not exist comes back falsey, so an ordering edge —
+a resource that must exist before anything is created, even though no field is
 ever read off it — is an ordinary line in the program:
 
 ```python
-if not sources.database:
+if not read("sql.azure.m.upbound.io/v1beta1", "MSSQLDatabase", "app"):
     return wait("the database has not been created yet")
 ```
 
-There is no `required` flag on a source, because the flag could only ever say
+Nothing declares this as required, because a declaration could only ever say
 "always". Written here the gate can say something a flag could not:
 
 ```python
-if variable.useSql and not sources.database:
+if variable.useSql and not read("sql.azure.m.upbound.io/v1beta1", "MSSQLDatabase", "app"):
     return wait("SQL is enabled but the database is not there yet")
 ```
 
-Turning `useSql` off releases the Weave without touching the source list.
+Turning `useSql` off releases the `Weave` with no other edit.
 
 ### `pending(reason)`
 
@@ -83,11 +84,96 @@ iteration is harmless.
 
 Use `wait()` when nothing can be produced. Use `pending()` when some of it can.
 
+## Reading the cluster
+
+```python
+read(apiVersion, kind, name, finalize=False)   # one object, or nothing
+select(apiVersion, kind, labels={})            # a list, sorted by name
+```
+
+Both are namespaced to the `Weave`'s own namespace and both go through the
+impersonated client, so a program can only reach what its ServiceAccount could
+read directly. In RBAC terms `read` needs `get` and `select` needs `list`.
+
+Nothing is declared anywhere. The controller records what a pass actually read
+and registers its watches from that recording, so a program that starts reading
+something starts being woken by it, and one that stops, stops — with no second
+place to keep in step. The recording is on `status.reads`.
+
+Reads are cached for the length of a pass. Reaching for the same resource in
+three branches is one API call and one value, so a program cannot contradict
+itself part-way through, and branching costs nothing.
+
+### Absence
+
+A resource that does not exist comes back falsey rather than as an object:
+
+```python
+licence = read("v1", "ConfigMap", "licence")
+if not licence:
+    return wait("no licence ConfigMap in this namespace yet")
+```
+
+`get()` and `has()` reach through it without raising. Reaching into it any other
+way is an error that names it:
+
+```
+MSSQLDatabase "tpyo" does not exist in this namespace, so it has no .status
+```
+
+which is where a misspelled name gets caught, there being no declared list to
+catch it any earlier.
+
+A failure to *read* is not an absence. A permission denial, or a kind that is
+not installed, ends the pass and lands on the `Weave` as itself — never as
+`None` that a program might mistake for "not yet".
+
+### `select`
+
+```python
+for tenant in select("v1", "ConfigMap", labels={"role": "tenant"}):
+    out["db-" + tenant.metadata.name] = {...}
+```
+
+Results are sorted by name, because return order is apply order and a
+composition built from a selection would otherwise reorder its own output
+whenever the API server answered in a different order.
+
+`labels` is a mapping of equality matches. Set-based selectors (`in`, `notin`)
+are a string syntax with their own parser and failure modes; select on what you
+have and filter in the body.
+
+It returns a list where `read` returns an object, which is why it has its own
+name rather than being a keyword away — the shape of the answer should not
+depend on which argument was passed.
+
+### `finalize=True`
+
+```python
+up = read("v1", "ConfigMap", "upstream", finalize=True)
+```
+
+Places a finalizer on the resource, so that when somebody deletes it this
+`Weave` tears down what it derived from it *first*. It needs `update` permission
+on that resource, and it is released after `--hold-timeout` regardless of
+progress: blocking somebody else's object, and their namespace deletion, forever
+is worse than an ordering violation.
+
+This orders the deletion of an API object and nothing more. A managed resource
+removed from the API server may leave its provider tearing down a cloud resource
+for minutes afterwards.
+
 ## Where variables come from
 
-Variables are keys; sources are resources. A ConfigMap named here is read for
-the values inside it, and never for the sake of an ordering edge — for that,
-declare it as a source and gate on it.
+Variables are keys; `read()` returns resources. A ConfigMap named here is read
+for the values inside it, and never for the sake of an ordering edge — for that,
+read it in the program and gate on it.
+
+Everything here could be written as a read in the body. It has a declarative
+form because configuration held in a ConfigMap or a Secret is common enough to
+be worth seeing without opening the program, and because the values arrive
+merged. Underneath it is a couple of implicit reads: same client, same cache,
+same watches.
 
 `spec.variables` is a list, merged in order, later entries winning:
 
@@ -140,8 +226,8 @@ reading are dotted status paths and the other half are annotation keys that
 cannot be identifiers:
 
 ```python
-sources.resourceGroup.status.atProvider.id
-sources.storage.metadata.annotations["crossplane.io/external-name"]
+rg.status.atProvider.id
+storage.metadata.annotations["crossplane.io/external-name"]
 ```
 
 A missing field is an **error**, not `None`. A typo that silently produced
@@ -151,9 +237,9 @@ a far worse failure than a backtrace. Optional access is spelled explicitly.
 ### `get(obj, path, default=None)`
 
 ```python
-get(sources.rg, "status.atProvider.id", "")
+get(rg, "status.atProvider.id", "")
 get(observed, ["identity", "status", "atProvider", "principalId"])
-get(sources.storage, 'metadata.annotations["crossplane.io/external-name"]')
+get(storage, 'metadata.annotations["crossplane.io/external-name"]')
 ```
 
 Paths accept dotted segments, bracketed quoted keys, and numeric indices
@@ -161,7 +247,7 @@ Paths accept dotted segments, bracketed quoted keys, and numeric indices
 works too, which avoids quoting when the path is built from data.
 
 Traversal through a `None` yields the default rather than an error, so
-`get(sources.missing, "a.b.c", "x")` is safe.
+`get(missing, "a.b.c", "x")` is safe, and so is `get()` over a read that found nothing.
 
 ### `require(obj, path, name=None)`
 
@@ -169,7 +255,7 @@ Reads a field that must be resolved, and stops the whole evaluation with a
 `Waiting` condition when it is not:
 
 ```python
-rg_id = require(sources.resourceGroup, "status.atProvider.id")
+rg_id = require(rg, "status.atProvider.id")
 ```
 
 ```
@@ -235,6 +321,9 @@ way to write a composition that behaves differently on each reconcile.
 - No clock, no randomness, no environment, no I/O of any kind.
 - An execution-step budget (`--max-steps`), a cap on returned resources
   (`--max-resources`) and on total values in the result (`--max-values`).
+- A cap on distinct resources one evaluation may read (`--max-reads`) and on
+  what a single `select()` may match (`--max-selected`). Every read is also a
+  watch the controller keeps alive afterwards.
 
 Every one of these fails as a `Degraded` condition with its own reason:
 `ProgramSyntaxError`, `ProgramFailed`, `ProgramBudgetExceeded`,
@@ -278,7 +367,8 @@ Two phases and a fan-out, which between them cover most of what compositions do:
 def compose(variable, observed):
     out = {}
 
-    rg_id = require(sources.resourceGroup, "status.atProvider.id")
+    rg = read("azure.m.upbound.io/v1beta1", "ResourceGroup", variable.resourceGroupName)
+    rg_id = require(rg, "status.atProvider.id")
 
     out["identity"] = {
         "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",

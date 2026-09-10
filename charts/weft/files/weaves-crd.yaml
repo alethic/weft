@@ -183,7 +183,7 @@ spec:
                   Conditions follow the standard Ready / Waiting / Degraded split.
 
                   Waiting deserves emphasis: resolution has three outcomes, not two, and
-                  "not yet" is the normal one. A missing source, an unpopulated status
+                  "not yet" is the normal one. A resource that is not there, an unpopulated status
                   field and an explicit wait() all land here, each naming the specific
                   thing that has not resolved.
                 items:

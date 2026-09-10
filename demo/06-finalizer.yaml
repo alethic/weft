@@ -1,8 +1,8 @@
 # A finalizer on somebody else's object.
 #
-# `finalize: true` asks Weft to hold the source open until what was derived from
-# it has been torn down. Deleting the source blocks, the outputs go first, then
-# the finalizer is released and the source disappears:
+# read(..., finalize=True) asks Weft to hold a resource open until what was
+# derived from it has been torn down. Deleting it blocks, the outputs go first,
+# then the finalizer is released and it disappears:
 #
 #   kubectl -n weft-demo get cm upstream -o jsonpath='{.metadata.finalizers}'
 #   kubectl -n weft-demo delete cm upstream
@@ -11,7 +11,7 @@
 # *remove* the finalizer is re-checked on every pass, not only when adding it,
 # because a RoleBinding revoked afterwards would otherwise leave a finalizer
 # nobody can lift - deadlocking the object and the namespace it lives in. It is
-# released after sourceFinalizerTimeout regardless of progress, because blocking
+# released after holdTimeout regardless of progress, because blocking
 # a stranger's object forever is worse than the ordering violation. And
 # `weft reap` releases every one Weft has placed, which is what you run before
 # uninstalling the controller.

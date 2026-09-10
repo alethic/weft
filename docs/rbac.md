@@ -12,12 +12,17 @@ exactly what its ServiceAccount can do and nothing more.
 
 That ServiceAccount needs, in the Weave's own namespace:
 
-- `get` on every declared source. `list` and `watch` too, if you want changes
-  noticed immediately rather than on the poll interval.
+- `get` on every kind the program calls `read()` on, and `list` on every kind it
+  calls `select()` on. `watch` too, for both, if you want changes noticed
+  immediately rather than on the poll interval.
 - `get`, `create` and `patch` on every kind the program returns. Server-side
   apply requires `patch`.
 - `delete` on those kinds, for pruning and teardown.
-- `update` on any source declared with `finalize: true`.
+- `update` on anything read with `finalize=True`.
+
+Nothing declares any of this, so nothing can be checked ahead of running the
+program. The read is where the denial happens, and the read is where it is
+reported.
 
 You do not have to work this out in advance. Apply the `Weave` and read the
 condition:
@@ -26,7 +31,7 @@ condition:
 $ kubectl describe weave app
 ...
   Degraded    True    Forbidden
-    reading source "resourceGroup":
+    reading ResourceGroup "sweep-env":
     ServiceAccount "composer" cannot get resourcegroups.azure.m.upbound.io in namespace "sweep-labs"
 
     Grant it with:
@@ -171,16 +176,18 @@ subject, so the audit log shows who a change was really made for:
 
 ## Finalizers
 
-`finalize: true` on a source places a finalizer on an object the Weave does not
+`read(..., finalize=True)` places a finalizer on an object the `Weave` does not
 own. Weft checks it can *remove* that finalizer on every pass, not only when
 adding it, because a RoleBinding revoked afterwards would otherwise leave a
 finalizer nobody can lift — deadlocking the object and the namespace it lives
 in.
 
-It also releases the finalizer after `--source-finalizer-timeout` regardless of
+It also releases the finalizer after `--hold-timeout` regardless of
 teardown progress. Blocking somebody else's object forever is worse than the
 ordering violation.
 
+The record of what has been placed lives on `status.held`, not in any
+declaration — a program that will never run again still has to be undoable.
 Before uninstalling the controller, release everything it has placed:
 
 ```bash

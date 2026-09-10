@@ -38,8 +38,8 @@ The chart creates no namespace of its own; use `--create-namespace`.
 
 ## Uninstall
 
-**Release finalizers first.** If any `Weave` declares a source with
-`finalize: true`, Weft has placed finalizers on objects it does not own. Remove
+**Release finalizers first.** If any `Weave` reads a resource with
+`finalize=True`, Weft has placed finalizers on objects it does not own. Remove
 the controller without releasing them and those objects cannot be deleted, and
 neither can their namespaces:
 

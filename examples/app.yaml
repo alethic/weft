@@ -34,7 +34,7 @@ spec:
         # produced N copies of an entire CronJob; here it is data, and the program
         # loops over it. Adding a role is a one-line edit to this list.
         #
-        # scope names one of the declared sources; principal names one of the
+        # scope names one of the resources read above; principal names one of the
         # identities created below.
         roles:
         - name: storage-blob-data-contributor
@@ -108,7 +108,7 @@ spec:
 
         # Phase two. principalId is written back by the provider minutes after
         # the apply returns, so an identity we just created is exactly as
-        # unready as an external source that has not appeared. One rule covers
+        # unready as an external resource that has not appeared. One rule covers
         # both, and the rule is: if it is not resolved, do not return what
         # depends on it.
         principals = {}
@@ -132,7 +132,7 @@ spec:
                 pending("principalId on the " + role.principal + " identity")
                 continue
             if not scope:
-                pending("status.atProvider.id on the " + role.scope + " source")
+                pending("status.atProvider.id on " + role.scope)
                 continue
 
             out["ra-" + role.name] = {

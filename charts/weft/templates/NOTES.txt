@@ -17,8 +17,8 @@ confining it means.
 {{- end }}
 
 A namespace user needs nothing from you to author one, but the ServiceAccount
-their Weave names does need permission to read its sources and write its
-outputs. Weft tells them exactly what is missing, in commands they can paste:
+their Weave names does need permission to read what its program reads and to
+write its outputs. Weft tells them exactly what is missing, in commands they can paste:
 
   kubectl describe weave <name>
 
@@ -57,7 +57,7 @@ holds cluster-admin. This is only needed for a templated group such as
 system:serviceaccounts:{namespace}.
 {{- end }}
 
-BEFORE YOU UNINSTALL: if any Weave declares a source with finalize: true, Weft
+BEFORE YOU UNINSTALL: if any Weave reads a resource with finalize=True, Weft
 has placed finalizers on objects it does not own. Release them first, or those
 objects cannot be deleted and neither can their namespaces:
 

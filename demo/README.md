@@ -93,7 +93,7 @@ kubectl -n weft-demo get weave waiting \
   -o jsonpath='{.status.conditions[?(@.type=="Waiting")].message}'
 ```
 
-> waiting for ConfigMap "licence" (source "licence") and ConfigMap "tenant" (source "tenant")
+> no licence ConfigMap in this namespace yet
 
 Create them one at a time and watch it narrow, then resolve:
 
@@ -103,11 +103,11 @@ kubectl -n weft-demo create configmap licence --from-literal=ok=true
 ```
 
 `licence` is never read for a value — its existence is the whole requirement.
-The gate is a line in the program rather than a flag on the source, which is
+The gate is a line in the program rather than a flag on a declaration, which is
 what lets it be conditional:
 
 ```python
-if variable.needsLicence and not sources.licence:
+if variable.needsLicence and not read("v1", "ConfigMap", "licence"):
     return wait("no licence ConfigMap in this namespace yet")
 ```
 
@@ -190,7 +190,7 @@ kubectl -n weft-demo delete cm upstream
 ```
 
 The derived output is torn down first, then the finalizer is released and the
-source disappears. Three rules make this safe to hand to a namespace user: the
+held resource disappears. Three rules make this safe to hand to a namespace user: the
 permission to *remove* the finalizer is re-checked every pass, it is released
 after a timeout regardless of progress, and `weft reap` lifts every one Weft has
 placed.

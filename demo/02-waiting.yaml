@@ -4,7 +4,7 @@
 # is the state a composition spends most of its life in, so it has a condition
 # of its own rather than being an error.
 #
-# This one waits on a source that does not exist. Create it and watch the Weave
+# This one reads a ConfigMap that does not exist. Create it and watch the Weave
 # resolve itself with nothing else touched:
 #
 #   kubectl -n weft-demo create configmap tenant --from-literal=tenantId=acme-42

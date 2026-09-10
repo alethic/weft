@@ -1,4 +1,4 @@
-# The fan-in. Nine sources, almost pure leaf substitution, producing a single
+# The fan-in. Eight reads, almost pure leaf substitution, producing a single
 # ConfigMap whose one key holds an entire values.yaml document.
 #
 # This one stays on its own. Nothing else reads what it produces, so merging it

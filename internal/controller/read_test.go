@@ -247,7 +247,7 @@ func TestHoldIsReleasedWhenTheProgramStopsAskingForIt(t *testing.T) {
 	h := newHarness(t, nil)
 	h.configMap("upstream", map[string]string{"ok": "true"})
 
-	w := h.create("relaxing", `
+	h.create("relaxing", `
 def compose(variable, observed):
     read("v1", "ConfigMap", "upstream", finalize=True)
     return {}
@@ -257,7 +257,7 @@ def compose(variable, observed):
 		t.Fatal("expected a hold to be placed")
 	}
 
-	w = h.weave("relaxing")
+	w := h.weave("relaxing")
 	w.Spec.Program = `
 def compose(variable, observed):
     read("v1", "ConfigMap", "upstream")

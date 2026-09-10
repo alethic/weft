@@ -26,7 +26,8 @@ when the identity changes", so they were chained by both polling.
 
 ## What disappears
 
-**The exec ConfigMap.** Every original listed its own ConfigMap as a source.
+**The exec ConfigMap.** Every original listed its own ConfigMap among its
+resources.
 That existed for one reason: to obtain a `uid` for the `ownerReferences` on the
 outputs. In Weft the Weave is the owner and writes the reference itself, so the
 whole device goes away — and with it the `assert "ConfigMap not found."` at the
@@ -62,7 +63,7 @@ the parts that have to observe something.
 
 ## Translating the patterns
 
-### Dictionary lookup becomes a source id
+### Dictionary lookup becomes a read
 
 The originals built a map keyed by `apiVersion/kind/name` and indexed into it:
 
@@ -75,18 +76,10 @@ The originals built a map keyed by `apiVersion/kind/name` and indexed into it:
 {{- $rg | isKind "map" | assert "ResourceGroup not found." }}
 ```
 
-That whole preamble is `spec.sources`:
-
-```yaml
-sources:
-- id: resourceGroup
-  apiVersion: azure.m.upbound.io/v1beta1
-  kind: ResourceGroup
-  name: sweep-env
-```
+That whole preamble is one line:
 
 ```python
-sources.resourceGroup
+rg = read("azure.m.upbound.io/v1beta1", "ResourceGroup", "sweep-env")
 ```
 
 ### `required` becomes `require`
@@ -96,7 +89,7 @@ sources.resourceGroup
 ```
 
 ```python
-rg_id = require(sources.resourceGroup, "status.atProvider.id")
+rg_id = require(rg, "status.atProvider.id")
 ```
 
 The difference is what happens next. `required` failed the render, the CronJob
@@ -124,13 +117,13 @@ to break when someone adds a level of nesting:
 
 ### The ordering gate stays explicit
 
-One composition declared `MSSQLDatabase` as a source, asserted it existed, and
-never read a field from it. There is no expression to infer that dependency
-from, so any design that derives edges from references drops it silently. Weft
-does not infer - the source is declared, and the assertion ports directly:
+One composition asserted `MSSQLDatabase` existed and never read a field from it.
+There is no expression to infer that dependency from, so any design that derives
+edges from references drops it silently. Weft does not infer - the read is
+written down, and the assertion ports directly:
 
 ```python
-if not sources.database:
+if not read("sql.azure.m.upbound.io/v1beta1", "MSSQLDatabase", "sweep-env"):
     return wait("the MSSQLDatabase has not been created yet")
 ```
 
@@ -145,6 +138,5 @@ template, which then reported "resource not found" instead of the API error that
 actually caused it.
 
 The lesson is structural rather than incidental, and it is built into the
-controller: an error reading *any* source aborts before evaluation, and the API
-error is what gets surfaced. Weft never evaluates against a partially resolved
-source set. Absence is a value a program can see; a failure to read is not.
+controller: a failed read aborts the pass and the API error is what gets
+surfaced. Absence is a value a program can see; a failure to read is not.

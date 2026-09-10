@@ -77,15 +77,9 @@ spec:
   - values:
       prefix: demo
 
-  sources:
-  - id: tenant
-    apiVersion: v1
-    kind: ConfigMap
-    name: tenant
-
   program: |
     def compose(variable, observed):
-        tenant = require(sources.tenant, "data.tenantId")
+        tenant = require(read("v1", "ConfigMap", "tenant"), "data.tenantId")
         return {
             "settings": {
                 "apiVersion": "v1",
@@ -118,7 +112,7 @@ status.atProvider.principalId is not set on UserAssignedIdentity/demo-app
 
 Existence does not unblock. **Field resolution** does. Applying a Crossplane
 managed resource returns instantly, but its `status.atProvider` populates
-minutes later, so a resource we created behaves exactly like an external source
+minutes later, so a resource we created behaves exactly like an external one
 that is not ready. One rule covers both.
 
 ### Self-reference is how staging works
@@ -198,24 +192,28 @@ defaults produces an order nobody wrote, and is rejected.
 ### Waiting on a resource nothing reads
 
 A dependency that is never referenced is invisible to any design that infers
-edges from expression references. Weft does not infer: sources are declared, and
-whether an absent one should block is a line in the program.
+edges from expression references. Weft does not infer — the read is written, and
+what an absence means is the line after it.
 
 ```python
 def compose(variable, observed):
     # Nothing below reads a field off the database. Its existence is the
     # requirement.
-    if not sources.database:
+    if not read("sql.azure.m.upbound.io/v1beta1", "MSSQLDatabase", "app"):
         return wait("the database has not been created yet")
 ```
 
-Which also expresses what a flag on the source could not — a gate that depends
-on configuration:
+Which also expresses what a declared flag could not — a gate that depends on
+configuration:
 
 ```python
-if variable.useSql and not sources.database:
+if variable.useSql and not read("sql.azure.m.upbound.io/v1beta1", "MSSQLDatabase", "app"):
     return wait("SQL is enabled but the database is not there yet")
 ```
+
+Turning `useSql` off releases the `Weave` with no other edit. Reading the same
+resource twice in a pass is one API call and one value, so branching on it costs
+nothing.
 
 ### Pruning
 
@@ -261,7 +259,8 @@ Notable flags:
 | flag | default | why you would change it |
 |---|---|---|
 | `--prune-delay` | `2m` | how long a resource must be gone before deletion |
-| `--source-finalizer-timeout` | `10m` | how long a finalizer may block somebody else's object |
+| `--hold-timeout` | `10m` | how long a `finalize=True` read may block somebody else's object |
+| `--max-reads` | `100` | distinct resources one evaluation may read |
 | `--teardown-timeout` | `15m` | how long ordered teardown runs before cascading collection takes over |
 | `--impersonate-groups` | `system:serviceaccounts,system:authenticated` | see [docs/rbac.md](docs/rbac.md) |
 | `--max-steps` | `20000000` | the execution budget for one `compose()` |
@@ -332,7 +331,7 @@ That last layer matters most: every bug found during development was in the
 reconcile loop, and none of them were visible without an API server to react to.
 
 Verified by hand against a live cluster with RBAC enforced, and not yet
-automated: impersonation *denial* specifically, and source finalizers.
+automated: impersonation *denial* specifically, and held finalizers.
 
 ## Development
 
