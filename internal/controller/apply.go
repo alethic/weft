@@ -8,6 +8,7 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/inventory"
@@ -97,11 +98,11 @@ func applyError(item inventory.Item, err error) error {
 // that names a principal has to go before the identity that owns the principal,
 // or the provider is left reconciling an assignment whose subject no longer
 // exists.
-func (r *WeaveReconciler) deleteWaves(ctx context.Context, c *kube.Client, entries []v1alpha1.InventoryEntry) ([]v1alpha1.InventoryEntry, error) {
+func (r *WeaveReconciler) deleteWaves(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, entries []v1alpha1.InventoryEntry) ([]v1alpha1.InventoryEntry, error) {
 	groups := inventory.Waves(entries)
 
 	for i, group := range groups {
-		standing, err := r.deleteGroup(ctx, c, group)
+		standing, err := r.deleteGroup(ctx, c, weave, group)
 		if err != nil {
 			return entries, err
 		}
@@ -121,7 +122,7 @@ func (r *WeaveReconciler) deleteWaves(ctx context.Context, c *kube.Client, entri
 
 // deleteGroup issues deletes for one wave and reports which of them have not
 // gone away yet.
-func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, group []v1alpha1.InventoryEntry) ([]v1alpha1.InventoryEntry, error) {
+func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, group []v1alpha1.InventoryEntry) ([]v1alpha1.InventoryEntry, error) {
 	var standing []v1alpha1.InventoryEntry
 
 	for _, e := range group {
@@ -132,7 +133,7 @@ func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, group
 			continue
 		}
 
-		_, err = c.Get(ctx, gvk, e.Name)
+		existing, err := c.Get(ctx, gvk, e.Name)
 		switch {
 		case apierrors.IsNotFound(err):
 			continue
@@ -149,6 +150,18 @@ func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, group
 			return nil, fmt.Errorf("reading %q before deleting it: %w", e.Key, err)
 		}
 
+		// Only delete what is still ours.
+		//
+		// This is what makes orphan propagation work. Garbage collection strips
+		// the owner reference as soon as it processes the deletion, which can
+		// happen before this controller ever reconciles - so checking for the
+		// orphan finalizer is a race, and losing it means deleting the very
+		// resources somebody asked to keep. Ownership is not transient, so it
+		// is what gets checked.
+		if !ownedBy(existing, weave) {
+			continue
+		}
+
 		if err := c.Delete(ctx, gvk, e.Name, e.UID); err != nil {
 			var perm *kube.PermissionError
 			if errors.As(err, &perm) {
@@ -160,6 +173,16 @@ func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, group
 	}
 
 	return standing, nil
+}
+
+// ownedBy reports whether an object still carries this Weave's owner reference.
+func ownedBy(obj *unstructured.Unstructured, weave *v1alpha1.Weave) bool {
+	for _, ref := range obj.GetOwnerReferences() {
+		if ref.UID == weave.UID {
+			return true
+		}
+	}
+	return false
 }
 
 // describeEntries renders a short list for a condition message.

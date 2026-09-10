@@ -262,6 +262,13 @@ replaced rather than left behind. See [docs/ownership.md](docs/ownership.md).
 
 ### Uninstalling
 
+Deleting a `Weave` deletes what it created, in reverse wave order. To keep the
+resources instead, use the verb Kubernetes already has for it:
+
+```bash
+kubectl delete weave app --cascade=orphan
+```
+
 If any `Weave` uses `finalize: true`, release those finalizers **before**
 removing the controller, or the objects holding them cannot be deleted:
 

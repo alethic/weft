@@ -388,7 +388,7 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 	// Replaced objects go first. Their replacements have already been applied,
 	// so nothing the program still describes depends on them.
 	if len(superseded) > 0 {
-		remaining, err := r.deleteWaves(ctx, c, superseded)
+		remaining, err := r.deleteWaves(ctx, c, weave, superseded)
 		if err != nil {
 			return pass{}, err
 		}
@@ -406,7 +406,7 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 	}
 
 	if len(diff.Prune) > 0 {
-		remaining, err := r.deleteWaves(ctx, c, diff.Prune)
+		remaining, err := r.deleteWaves(ctx, c, weave, diff.Prune)
 		if err != nil {
 			return pass{}, err
 		}
@@ -442,9 +442,26 @@ func (r *WeaveReconciler) reconcileDeletion(ctx context.Context, weave *v1alpha1
 		return r.finishDeletion(ctx, weave, key)
 	}
 
+	// Somebody asked to keep the resources - kubectl delete --cascade=orphan,
+	// which the API server marks with the orphan finalizer. Tearing them down
+	// anyway would silently ignore an explicit instruction, which is worse than
+	// not offering the option at all. Garbage collection strips our owner
+	// references and the objects stay, no longer managed by anything.
+	if controllerutil.ContainsFinalizer(weave, metav1.FinalizerOrphanDependents) {
+		log.Info("orphaning resources rather than tearing them down",
+			"resources", len(weave.Status.Inventory))
+		r.eventf(weave, "Normal", "Orphaned",
+			"left %d resources in place as requested; they are no longer managed by any Weave",
+			len(weave.Status.Inventory))
+		if err := r.releaseAllSourceFinalizers(ctx, c, weave); err != nil {
+			log.Error(err, "releasing source finalizers")
+		}
+		return r.finishDeletion(ctx, weave, key)
+	}
+
 	overdue := elapsed(weave.DeletionTimestamp) > r.Opts.TeardownTimeout
 	if !overdue {
-		remaining, err := r.deleteWaves(ctx, c, weave.Status.Inventory)
+		remaining, err := r.deleteWaves(ctx, c, weave, weave.Status.Inventory)
 		if err != nil {
 			var h *halt
 			if errors.As(err, &h) && h.kind == haltDegraded {

@@ -49,6 +49,10 @@ kubectl -n weft-system exec deploy/weft -- /weft reap
 helm uninstall weft --namespace weft-system
 ```
 
+To remove the controller but keep everything the Weaves produced, delete them
+with `kubectl delete weave --all --cascade=orphan` first. Weft honours orphan
+propagation: the resources stay and simply stop being managed.
+
 The CRD is left behind on purpose (`crds.keep`). Deleting it deletes every
 `Weave` in the cluster, and each `Weave` deleted that way takes the resources it
 owns with it — an uninstall should not be able to destroy infrastructure.

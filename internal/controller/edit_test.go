@@ -6,9 +6,12 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/naming"
 )
 
@@ -375,5 +378,88 @@ def compose(inputs, sources, observed):
 	c := requireCondition(t, h.weave("colliding"), naming.ConditionDegraded, metav1.ConditionTrue)
 	if c.Reason != ReasonNotOurs {
 		t.Errorf("reason = %q, want %q (%s)", c.Reason, ReasonNotOurs, c.Message)
+	}
+}
+
+// kubectl delete --cascade=orphan means "delete the owner, keep the children".
+// The API server marks that with the orphan finalizer, and tearing the
+// resources down anyway would silently ignore an explicit instruction - worse
+// than not supporting it, because the person believes they protected them.
+func TestOrphanPropagationKeepsTheResources(t *testing.T) {
+	h := newHarness(t, nil)
+
+	h.create("orphaning", `
+def compose(inputs, sources, observed):
+    return {
+        "keeper": {
+            "apiVersion": "v1", "kind": "ConfigMap",
+            "metadata": {"name": "keeper"}, "data": {"k": "v"},
+        },
+    }
+`, nil, "")
+	h.settle("orphaning", 2)
+
+	if !h.exists("keeper") {
+		t.Fatal("keeper should exist")
+	}
+
+	orphan := metav1.DeletePropagationOrphan
+	if err := testK8s.Delete(h.ctx, h.weave("orphaning"), &client.DeleteOptions{
+		PropagationPolicy: &orphan,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	h.settle("orphaning", 3)
+
+	cm, err := h.getConfigMap("keeper")
+	if err != nil {
+		t.Fatalf("the resource should have been left in place: %v", err)
+	}
+	if cm.DeletionTimestamp != nil {
+		t.Error("the resource is being deleted despite orphan propagation")
+	}
+
+	// What Weft controls is that its own finalizer is gone. The remaining
+	// "orphan" finalizer belongs to the API server and is removed by garbage
+	// collection once it has stripped the owner references, on a schedule of
+	// its own - asserting on that would be testing Kubernetes rather than this
+	// controller, and it is slow enough on a small cluster to be flaky.
+	var released v1alpha1.Weave
+	err = testK8s.Get(h.ctx, k8stypes.NamespacedName{Namespace: h.namespace, Name: "orphaning"}, &released)
+	switch {
+	case apierrors.IsNotFound(err):
+		// Collection already finished.
+	case err != nil:
+		t.Fatal(err)
+	default:
+		for _, f := range released.Finalizers {
+			if f == naming.WeaveFinalizer {
+				t.Errorf("Weft is still holding the Weave: %v", released.Finalizers)
+			}
+		}
+	}
+}
+
+// And the default is still to take them: without cascade there would be no way
+// to uninstall what a Weave produced except by hand.
+func TestDefaultDeletionStillRemovesTheResources(t *testing.T) {
+	h := newHarness(t, nil)
+
+	h.create("cascading", `
+def compose(inputs, sources, observed):
+    return {
+        "goes": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "goes"}},
+    }
+`, nil, "")
+	h.settle("cascading", 2)
+
+	if err := testK8s.Delete(h.ctx, h.weave("cascading")); err != nil {
+		t.Fatal(err)
+	}
+	h.settle("cascading", 3)
+
+	if h.exists("goes") {
+		t.Error("an ordinary delete should take the resources with it")
 	}
 }

@@ -135,7 +135,7 @@ func (r *WeaveReconciler) finalizeDeletingSource(
 
 	overdue := elapsed(status.TeardownStartedAt) > r.Opts.SourceFinalizerTimeout
 	if !overdue {
-		remaining, err := r.deleteWaves(ctx, c, weave.Status.Inventory)
+		remaining, err := r.deleteWaves(ctx, c, weave, weave.Status.Inventory)
 		if err != nil {
 			return false, err
 		}

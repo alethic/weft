@@ -63,9 +63,10 @@ That last sentence is the part to understand before annotating. Adoption is
 full ownership: the object gets Weft's owner reference, the program becomes the
 authority for every field it sets, and deleting the `Weave` deletes the object.
 
-There is no half-managed state where Weft writes an object but leaves it behind
-on delete. That would need a separate ownership mode, and until there is a
-coherent design for one, ownership means ownership.
+If you later want it handed back rather than destroyed, release it with
+`--cascade=orphan` — see below. There is no half-managed mode where Weft writes
+an object and leaves it behind on delete; releasing is the deliberate act
+instead.
 
 ### What adoption does not do
 
@@ -77,6 +78,52 @@ coherent design for one, ownership means ownership.
 - It does not transfer between Weaves. An object already owned by one `Weave`
   is refused for another regardless of the annotation, because the two would
   apply over each other on every reconcile.
+
+## Deleting a Weave takes its resources
+
+Deleting a `Weave` deletes what it created, in reverse wave order. That is not
+only convenience: without it the model would contradict itself. Removing one
+resource from a program deletes that resource, so removing the whole program
+deleting nothing would be the strange case, and there would be no way to
+uninstall what a `Weave` produced except by hand.
+
+### Keeping them
+
+Kubernetes already has the verb for "delete the owner, keep the children", and
+Weft honours it:
+
+```bash
+kubectl delete weave app --cascade=orphan
+```
+
+The resources stay, garbage collection strips Weft's owner references, and they
+end up belonging to nobody — unmanaged, exactly as if they had been created by
+hand. The `Weave` records an event saying so before it goes.
+
+Ignoring that flag and deleting them anyway would be worse than not supporting
+it, because the person believes they have protected the resources.
+
+It works by checking ownership rather than by looking for the flag. Garbage
+collection strips the owner references as soon as it processes the deletion,
+which can happen before this controller reconciles at all — so watching for the
+`orphan` finalizer is a race, and losing it means deleting exactly the resources
+somebody asked to keep. Weft instead deletes only what still carries its owner
+reference, which is not transient and cannot be missed.
+
+That has a consequence worth knowing: **removing Weft's owner reference from an
+object releases it.** The `Weave` stops managing it and will not delete it,
+though it will notice the object still exists and refuse to recreate one by that
+name until it is adopted again.
+
+This is also the answer for anything that was **adopted**. Taking over an
+existing object means the `Weave` would delete it on the way out, which is a
+real consequence for something that existed first. If you want it handed back
+rather than destroyed, release it with `--cascade=orphan` — and if you want it
+back under management later, annotate it again.
+
+Orphaned resources keep their `weft.run/weave` label and `weft.run/key`
+annotation. A new `Weave` that tries to produce them will be refused as
+belonging to nobody, and can be given them again with the adopt annotation.
 
 ## Two keys cannot name one object
 
@@ -144,3 +191,5 @@ The record moves; the object does not move at all.
 | a key changes name or kind | new one applied, old one deleted |
 | an object moves to a new key | record moves, object untouched |
 | a key stops being returned | pruned, after the delay |
+| the `Weave` is deleted | its resources are deleted, in reverse wave order |
+| the `Weave` is deleted with `--cascade=orphan` | resources kept, owner references stripped |
