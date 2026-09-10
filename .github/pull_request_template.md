@@ -7,8 +7,11 @@
 - [ ] `make generate` produces no diff
 - [ ] `make test` passes, and the controller and chart suites actually ran
       rather than skipping
-- [ ] `golangci-lint run ./...` is clean
-- [ ] Chart version bumped, if anything under `charts/weft` changed
+- [ ] `make lint` is clean
+
+Versions are derived by GitVersion, so there is nothing to bump. A commit
+message containing `+semver: minor` or `+semver: major` moves the next version
+if this needs one.
 
 ## Does this touch the impersonation boundary?
 

@@ -18,6 +18,48 @@ and a CI run cannot disagree about versions.
 
 `helm` you supply; without it the chart tests skip.
 
+## Versioning
+
+[GitVersion](https://gitversion.net) derives the version from the branch and
+the history, so nothing is tagged or bumped by hand:
+
+| branch | shape | increment |
+|---|---|---|
+| `main` | `0.1.0-pre.9` | patch |
+| `develop` | `0.2.0-dev.4` | minor |
+| a release tag | `0.1.0` | — |
+
+`make version` prints what the current checkout would produce.
+
+To move the next version, say so in a commit message:
+
+```
++semver: minor
+```
+
+`next-version` in `GitVersion.yml` sets the floor.
+
+The chart and the image always carry the same version. `Chart.yaml` holds a
+placeholder that is replaced at package time, and the chart's `appVersion` is
+what selects the image tag, so a packaged chart points at the image the same run
+pushed. Releases additionally pin `image.digest`, so an installed release cannot
+drift under a moved tag.
+
+`latest` follows real releases only. A prerelease carries a label and never
+moves it.
+
+## Where builds go
+
+Every build of `main` or `develop` publishes to **GitHub Packages** — the image
+to `ghcr.io/alethic/weft` and the chart, as an OCI artifact, to
+`ghcr.io/alethic/charts/weft`. Pull requests publish nothing, which is why the
+publish job is the only one holding `packages: write`.
+
+A **GitHub release** is separate and deliberate: it happens when a tag drove the
+build, or when the workflow is run by hand with `publish` checked. The release
+action creates the tag from the derived version, so tagging is not a manual step
+either.
+
 ## What CI checks
 
 Beyond the tests: generated files are current, formatting is clean,

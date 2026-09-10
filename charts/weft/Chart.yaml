@@ -6,7 +6,9 @@ description: |
   others from them, reactively, running as their own ServiceAccount.
 type: application
 
-# Chart version. Bumped for chart changes; appVersion tracks the controller.
+# Placeholders. Both are replaced at package time with the version GitVersion
+# derived from the branch and history, so the chart and the image it points at
+# always carry the same version and neither is bumped by hand.
 version: 0.1.0
 appVersion: "0.1.0"
 

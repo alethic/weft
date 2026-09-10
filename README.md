@@ -44,8 +44,14 @@ Namespaced **and** impersonated **and** status-reactive was unoccupied.
 
 ```bash
 helm install weft oci://ghcr.io/alethic/charts/weft \
+  --version 0.1.0 \
   --namespace weft-system --create-namespace
 ```
+
+The chart and the controller image are published to GitHub Packages on every
+build of `main`, both signed with cosign. Versions come from GitVersion, so
+`main` produces prereleases such as `0.1.0-pre.9` and `latest` follows real
+releases only — pin `--version` for anything you care about.
 
 The chart is the supported install path and is documented in
 [charts/weft/README.md](charts/weft/README.md). It ships sensible defaults, a

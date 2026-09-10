@@ -1,6 +1,12 @@
 # Weft
 IMG ?= ghcr.io/alethic/weft:latest
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# GitVersion owns the version. It is derived from the branch and the history,
+# so nothing is tagged by hand and a build knows what it is without being told.
+# git describe is the fallback for a checkout without the tool installed.
+VERSION ?= $(shell dotnet-gitversion -showvariable SemVer 2>/dev/null | tr -d '' || true)
+ifeq ($(strip $(VERSION)),)
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+endif
 COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 DATE ?= $(shell git log -1 --format=%cI 2>/dev/null)
 PKG := github.com/alethic/weft/internal/version
@@ -88,6 +94,10 @@ reap: ## Release every finalizer Weft has placed. Run before undeploy.
 .PHONY: run
 run: ## Run the controller locally against the current kubecontext.
 	go run ./cmd/weft
+
+.PHONY: version
+version: ## Print the version this build would carry.
+	@echo $(VERSION)
 
 .PHONY: help
 help:

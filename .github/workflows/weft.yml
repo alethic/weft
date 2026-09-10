@@ -1,0 +1,394 @@
+name: weft
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish this build as a GitHub release, creating the tag if one does not exist.
+        type: boolean
+        default: false
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  release:
+    types:
+      - created
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weft-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HELM_VERSION: v3.16.3
+  IMAGE: ghcr.io/${{ github.repository }}
+  CHARTS: ghcr.io/${{ github.repository_owner }}/charts
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Verify generated files are current
+        run: |
+          make generate
+          if ! git diff --exit-code; then
+            echo "::error::generated files are stale; run 'make generate' and commit the result"
+            exit 1
+          fi
+
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      # Through make, so the version is pinned in one place and a local run and
+      # this one cannot disagree.
+      - run: make lint
+
+      # A controller that holds impersonation rights is a bad place for a known
+      # vulnerable dependency.
+      - run: make vulncheck
+
+  test:
+    name: Test (k8s ${{ matrix.kubernetes }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor the chart's kubeVersion claims, a middle version, and the
+        # newest available. Claiming ">=1.27.0-0" without ever running against
+        # 1.27 is a guess rather than a claim.
+        kubernetes: ["1.27.1", "1.33.0", "1.37.0"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The chart rendering tests shell out to helm. Without it they skip, and a
+      # chart that renders unparseable arguments would sail through.
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      # The controller tests run against a real API server. Without these
+      # binaries they skip, and the reconcile loop - where every bug found
+      # during development actually was - would go untested.
+      - name: Fetch the envtest control plane
+        run: make envtest ENVTEST_K8S_VERSION=${{ matrix.kubernetes }}
+
+      - run: go test ./... -count=1 -race -coverprofile=coverage.out
+
+      - name: Confirm the optional suites actually ran
+        run: |
+          # Both skip silently when their dependency is missing, which would
+          # make a green run meaningless.
+          go test ./internal/controller/ ./cmd/weft/ -count=1 -v \
+            -run 'TestReconcileAppliesAndOwns|TestChartArgsParse' | tee suites.log
+          grep -q -- "--- PASS: TestReconcileAppliesAndOwns" suites.log \
+            || { echo "::error::the controller suite did not run"; exit 1; }
+          grep -q -- "--- PASS: TestChartArgsParse" suites.log \
+            || { echo "::error::the chart suite did not run"; exit 1; }
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.kubernetes == '1.37.0'
+        with:
+          name: coverage
+          path: coverage.out
+
+  chart:
+    name: Chart
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - run: helm lint charts/weft
+
+      # Render the combinations the chart is expected to support, so a broken
+      # conditional is caught here rather than by whoever sets that value.
+      - name: Render supported configurations
+        run: |
+          set -euo pipefail
+          render() {
+            echo "--- $*"
+            helm template weft charts/weft --namespace weft-system "$@" >/dev/null
+          }
+          render
+          render --set metrics.serviceMonitor.enabled=true
+          render --set metrics.enabled=false
+          render --set crds.install=false
+          render --set crds.keep=false
+          render --set controller.watchNamespace=team-a
+          render --set rbac.impersonation.scope=namespaced --set 'rbac.impersonation.namespaces={a,b}'
+          render --set replicaCount=2 --set podDisruptionBudget.enabled=true
+          render --set serviceAccount.create=false --set serviceAccount.name=existing
+          render --set rbac.create=false
+          render --set image.digest=sha256:0000000000000000000000000000000000000000000000000000000000000000
+
+      - name: Reject configurations that should not render
+        run: |
+          set -uo pipefail
+          refuses() {
+            if helm template weft charts/weft --namespace weft-system "$@" >/dev/null 2>&1; then
+              echo "::error::expected this to be refused: $*"
+              exit 1
+            fi
+            echo "correctly refused: $*"
+          }
+          refuses --set rbac.impersonation.scope=namespaced
+          refuses --set replicaCount=3 --set controller.leaderElection.enabled=false
+          refuses --set rbac.impersonation.scope=global
+          refuses --set controller.pruneDelay=2minutes
+          refuses --set metrics.port=99999
+          refuses --set controller.log.encoder=xml
+
+  image:
+    name: Image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+
+      # Built and scanned on every run, including pull requests, which is why
+      # this job never gets packages:write. Publishing is a separate job that
+      # pull requests do not reach.
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: weft:ci
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Confirm the binary runs and reports its version
+        run: docker run --rm weft:ci version
+
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: weft:ci
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload the scan
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    needs: [lint, test, chart, image]
+    # Every build of a branch publishes to GitHub Packages. Pull requests do
+    # not, which is also why this is the only job holding packages:write.
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      version: ${{ steps.GitVersion.outputs.semVer }}
+      imageDigest: ${{ steps.push.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # GitVersion reads the whole history to work out where it is.
+          fetch-depth: 0
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@v4
+        with:
+          versionSpec: 6.x
+
+      - name: Execute GitVersion
+        id: GitVersion
+        uses: gittools/actions/gitversion/execute@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: ${{ env.HELM_VERSION }}
+      - uses: sigstore/cosign-installer@v3
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # latest only follows a real release. A prerelease carries a label, so
+      # moving latest onto one would hand it to anybody who pulled without a
+      # tag.
+      - name: Work out the image tags
+        id: tags
+        run: |
+          set -euo pipefail
+          version='${{ steps.GitVersion.outputs.semVer }}'
+          {
+            echo "list<<TAGS"
+            echo "${IMAGE}:${version}"
+            case "$version" in
+              *-*) ;;
+              *)   echo "${IMAGE}:latest" ;;
+            esac
+            echo "TAGS"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push the image
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.tags.outputs.list }}
+          build-args: |
+            VERSION=${{ steps.GitVersion.outputs.semVer }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ github.event.repository.updated_at }}
+          cache-from: type=gha
+          provenance: true
+          sbom: true
+
+      # Keyless, so there is no signing key to protect or rotate: the signature
+      # is bound to this workflow's OIDC identity and recorded in the public
+      # transparency log. Worth the two lines for an image that, once running,
+      # holds the right to impersonate ServiceAccounts.
+      - name: Sign the image
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+
+      - name: Verify the signature
+        run: |
+          cosign verify "${IMAGE}@${DIGEST}" \
+            --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            >/dev/null
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+
+      # The chart carries the version GitVersion produced and is pinned to the
+      # digest just published, so an installed release cannot drift under a
+      # moved tag. Chart.yaml's own version is a placeholder for local linting.
+      - name: Package and push the chart
+        id: chart
+        run: |
+          set -euo pipefail
+          version='${{ steps.GitVersion.outputs.semVer }}'
+          sed -i "s|^  digest: .*|  digest: \"${DIGEST}\"|" charts/weft/values.yaml
+          helm package charts/weft --destination dist \
+            --version "$version" --app-version "$version"
+          helm push dist/weft-*.tgz "oci://${CHARTS}" 2>&1 | tee push.log
+          echo "digest=$(awk '/^Digest: /{print $2}' push.log)" >> "$GITHUB_OUTPUT"
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+
+      - name: Sign the chart
+        run: cosign sign --yes "${CHARTS}/weft@${{ steps.chart.outputs.digest }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: chart
+          path: dist/*.tgz
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+    needs: publish
+    permissions:
+      contents: write
+    # One switch for the tag and the GitHub release together. Nothing is
+    # released implicitly: either a tag drove the build, or the run was asked
+    # for it by hand. The GitHub Packages push above is not gated by this and
+    # happens on every branch build.
+    if: github.ref_type == 'tag' || inputs.publish == true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: chart
+          path: dist
+
+      # `commit` is what lets this run from a branch: with no tag of this name
+      # yet the action creates one there, which is the tag that no longer has to
+      # be made by hand. Where it already exists and carries a release,
+      # allowUpdates keeps this from failing, omitBodyDuringUpdate leaves notes
+      # written by hand alone, and replacesArtifacts refreshes the chart rather
+      # than colliding with the one already attached.
+      - name: Create the release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: ${{ needs.publish.outputs.version }}
+          commit: ${{ github.sha }}
+          allowUpdates: true
+          omitBodyDuringUpdate: true
+          replacesArtifacts: true
+          artifacts: dist/*.tgz
+          prerelease: ${{ contains(needs.publish.outputs.version, '-') }}
+          makeLatest: ${{ !contains(needs.publish.outputs.version, '-') }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          body: |
+            ## Install
+
+            ```bash
+            helm install weft oci://${{ env.CHARTS }}/weft \
+              --version ${{ needs.publish.outputs.version }} \
+              --namespace weft-system --create-namespace
+            ```
+
+            Image: `${{ env.IMAGE }}@${{ needs.publish.outputs.imageDigest }}`
+
+            Both the image and the chart are signed with cosign, keyless:
+
+            ```bash
+            cosign verify ${{ env.IMAGE }}@${{ needs.publish.outputs.imageDigest }} \
+              --certificate-identity-regexp "^https://github.com/${{ github.repository }}/" \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+            ```
+
+            Before uninstalling, release any finalizers Weft has placed on
+            objects it does not own:
+
+            ```bash
+            kubectl -n weft-system exec deploy/weft -- /weft reap
+            ```
