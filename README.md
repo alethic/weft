@@ -1,66 +1,23 @@
 # Weft
 
-A Kubernetes operator that lets an ordinary namespace user apply one custom
-resource that reads existing resources in their namespace and generates other
-resources from them — reactively, with proper ownership and garbage collection.
+Weft is a Kubernetes operator for the job you currently do with a CronJob that
+runs `kubectl get | template | kubectl apply`.
 
-The name comes from weaving. The **warp** is the existing threads held on the
-loom: resources we read but do not own. The **weft** is what we pass across
-them: resources we create. The custom resource is a `Weave`.
+You write one namespaced custom resource, a `Weave`. It reads resources that
+already exist in your namespace, runs a small program over them, and applies
+whatever that program returns — reactively, whenever anything it read changes,
+with ownership and garbage collection handled for you.
 
-## The two properties
+Two things make it different from the other tools in this space. You do not need
+a platform team to install anything for you: a `Weave` is namespaced and there
+is no second, cluster-scoped object to register. And every read and every write
+runs as a ServiceAccount **you** name, so a `Weave` can never create anything
+you could not have created by hand.
 
-Everything else in this project is negotiable. These are not.
+The name comes from weaving. The **warp** is the threads already on the loom —
+resources you read but do not own. The **weft** is what you pass across them.
 
-**Namespace-scoped authoring.** A user with `edit` in their own namespace can
-create a `Weave` and get resources. No cluster-scoped object is created at
-runtime, no CRD is generated per composition, no platform team is in the loop,
-no cluster-admin.
-
-**Applies run as the user's ServiceAccount.** `spec.serviceAccountName` names a
-ServiceAccount in the same namespace, and the controller impersonates it for
-every read and every write. The controller holds impersonation rights, not
-blanket write access. A user can never cause the creation of anything their own
-ServiceAccount could not have created by hand.
-
-The second property is worth stating as a consequence: if you run this
-controller as cluster-admin and point a `Weave` at a ServiceAccount with no
-permissions, nothing is created, and the `Weave` tells you which RoleBinding is
-missing.
-
-## Why this and not something else
-
-| | namespaced authoring | impersonated writes | status-reactive |
-|---|---|---|---|
-| [kro](https://kro.run) | no — `ResourceGraphDefinition` is cluster-scoped and generates a CRD | no | yes |
-| [Crossplane v2](https://crossplane.io) | XRs are namespaced, but XRDs and Compositions are cluster-scoped admin artifacts | no — the RBAC manager runs with `escalate` | yes |
-| Metacontroller, Yoke ATC | no | no | yes |
-| [Flux](https://fluxcd.io) | yes | **yes** — this is where the model comes from | no — `dependsOn` between whole Kustomizations, and `substituteFrom` limited to ConfigMaps and Secrets |
-| Kyverno `generate` | yes | no — the background controller's own ServiceAccount does the creating, checked once at policy admission | yes |
-
-Namespaced **and** impersonated **and** status-reactive was unoccupied.
-
-## Quick start
-
-```bash
-helm install weft oci://ghcr.io/alethic/charts/weft \
-  --version 0.1.0 \
-  --namespace weft-system --create-namespace
-```
-
-The chart and the controller image are published to GitHub Packages on every
-build of `main`, both signed with cosign. Versions come from GitVersion, so
-`main` produces prereleases such as `0.1.0-pre.9` and `latest` follows real
-releases only — pin `--version` for anything you care about.
-
-The chart is the supported install path and is documented in
-[charts/weft/README.md](charts/weft/README.md). It ships sensible defaults, a
-values schema that rejects malformed input at install time, and refuses to
-render a handful of configurations that would only fail later - a templated
-impersonation group without an explicit acknowledgement of what it grants,
-several replicas with leader election off, and so on.
-
-Then, as an ordinary namespace user:
+## What one looks like
 
 ```yaml
 apiVersion: weft.run/v1alpha1
@@ -69,42 +26,91 @@ metadata:
   name: app
   namespace: my-namespace
 spec:
+  # Every read and write below happens as this ServiceAccount.
   serviceAccountName: composer
 
+  # Optional. Configuration, merged in order, later entries winning.
   variables:
-  # Merged in order, later entries winning. A base can live in a ConfigMap
-  # somebody else maintains, with overrides written here.
+  - configMap:
+      name: platform          # a base somebody else maintains
   - values:
-      prefix: demo
+      prefix: demo            # overrides for this Weave
 
   program: |
     def compose(variable, observed):
-        tenant = require(read("v1", "ConfigMap", "tenant"), "data.tenantId")
+        tenant = read("v1", "ConfigMap", "tenant")
+        if not tenant:
+            return wait("no tenant ConfigMap in this namespace yet")
+
         return {
             "settings": {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {"name": variable.prefix + "-settings"},
-                "data": {"tenantId": tenant},
+                "data": {"tenantId": require(tenant, "data.tenantId")},
             },
         }
 ```
 
-`composer` needs permission to read the `tenant` ConfigMap and to write the one
-being generated. If it does not have them, the `Weave` says so, in words you can
-paste into a shell. See [docs/rbac.md](docs/rbac.md).
+```console
+$ kubectl get weave
+NAME   READY   WAITING   AGE
+app    True    Applied   13s
+```
 
-## The model
+Create it, and `demo-settings` appears. Edit the `tenant` ConfigMap, and it
+updates. Delete the `Weave`, and it goes away.
+
+If `composer` cannot read the `tenant` ConfigMap or write the one being
+generated, nothing is created and the `Weave` tells you exactly which
+RoleBinding is missing, in a command you can paste.
+
+## Install
+
+No stable release is cut yet, so install the latest prerelease:
+
+```bash
+helm install weft oci://ghcr.io/alethic/charts/weft --devel \
+  --namespace weft-system --create-namespace
+```
+
+Pin `--version 0.1.0-pre.23` (or whichever) for anything you care about; once
+`1.0` exists, pin that instead. The chart and the controller image are published
+to GitHub Packages on every build of `main`, both signed with cosign.
+
+The chart is the supported install path and is documented in
+[charts/weft/README.md](charts/weft/README.md). It ships sensible defaults, a
+values schema that rejects malformed input at install time, and refuses to
+render a handful of configurations that would only fail later.
+
+Then, as an ordinary namespace user with `edit`, apply a `Weave`. There is no
+second step and nothing for an administrator to register.
+
+## Why you might want it
+
+| | namespaced authoring | impersonated writes | status-reactive |
+|---|---|---|---|
+| **Weft** | **yes** | **yes** | **yes** |
+| [kro](https://kro.run) | no — `ResourceGraphDefinition` is cluster-scoped and generates a CRD | no | yes |
+| [Crossplane v2](https://crossplane.io) | XRs are namespaced, but XRDs and Compositions are cluster-scoped admin artifacts | no — the RBAC manager runs with `escalate` | yes |
+| Metacontroller, Yoke ATC | no | no | yes |
+| [Flux](https://fluxcd.io) | yes | **yes** — this is where the model comes from | no — `dependsOn` between whole Kustomizations, and `substituteFrom` limited to ConfigMaps and Secrets |
+| Kyverno `generate` | yes | no — the background controller's own ServiceAccount does the creating, checked once at policy admission | yes |
+
+If you already have Crossplane or a provider whose resources report status
+asynchronously, the third column is the one that will matter to you day to day.
+
+## How it behaves
 
 ### Three outcomes, not two
 
 Resolution can succeed, fail permanently, or **not yet**. "Not yet" is the
-normal case, not an edge case, and it has its own condition:
+normal case, not an edge case, and it has a condition of its own:
 
-```
+```console
 $ kubectl get weave
-NAME   READY   WAITING
-app    False   FieldUnresolved
+NAME   READY   WAITING           AGE
+app    False   FieldUnresolved   7s
 
 $ kubectl get weave app -o jsonpath='{.status.conditions[?(@.type=="Waiting")].message}'
 status.atProvider.principalId is not set on UserAssignedIdentity/demo-app
@@ -112,48 +118,60 @@ status.atProvider.principalId is not set on UserAssignedIdentity/demo-app
 
 Existence does not unblock. **Field resolution** does. Applying a Crossplane
 managed resource returns instantly, but its `status.atProvider` populates
-minutes later, so a resource we created behaves exactly like an external one
-that is not ready. One rule covers both.
+minutes later — so a resource you created behaves exactly like an external one
+that is not ready, and one rule covers both.
 
-### Self-reference is how staging works
+Alerting on `Degraded` is useful. Alerting on `Waiting` is not: it is the steady
+state of any composition that spans several provisioning steps.
 
-`observed` holds the resources this `Weave` previously created, read back live.
-A composition advances in phases by returning only what it can:
+### Reading the cluster
+
+```python
+rg = read("azure.m.upbound.io/v1beta1", "ResourceGroup", "sweep-env")
+tenants = select("v1", "ConfigMap", labels={"role": "tenant"})
+```
+
+Nothing is declared in the spec. The controller records what each pass actually
+read and registers its watches from that recording, so a program that starts
+reading something starts being woken by it, and one that stops, stops — there is
+no second place to keep in step.
+
+Both are namespaced and both are impersonated: `read` needs `get` on that kind,
+`select` needs `list`. A resource that does not exist comes back falsey; a
+resource you are not allowed to read is an error, never a quiet `None`.
+
+### Staging happens through `observed`
+
+`observed` holds what this `Weave` previously created, read back live. A
+composition advances in phases by returning only what it can:
 
 ```python
 def compose(variable, observed):
-    out = {}
-    out["identity"] = {...}                      # phase one
+    out = {"identity": {...}}
 
-    pid = get(observed, ["identity", "status", "atProvider", "principalId"])
-    if not pid:
+    # The provider writes principalId back minutes after the apply returns.
+    principal = get(observed, ["identity", "status", "atProvider", "principalId"])
+    if not principal:
         pending("principalId on the app identity")
-        return out                               # the identity is applied anyway
+        return out                        # the identity exists; nothing else yet
 
-    for role in variable.roles:                    # phase two
+    for role in variable.roles:
         out["ra-" + role.name] = {...}
     return out
 ```
 
-No `dependsOn`, no explicit graph. Conditional inclusion *is* the dependency
-edge, and the watch on the identity wakes the `Weave` the moment its status is
-written back.
+`pending()` rather than `wait()` matters: a wait produces no resources at all,
+so the identity would never be created and the composition could never advance.
 
-`pending()` rather than `wait()` matters here: a wait produces no resources at
-all, so the identity everything depends on would never be created and the
-composition could never advance past it. `pending()` applies what is ready and
-still reports what is outstanding.
+### It manages only what it made
 
-### Weft manages only what it made
-
-A program that names an object which already exists is refused, not granted it.
-Server-side apply is create-or-update, so applying would add Weft's owner
-reference and deleting the `Weave` would then delete a resource Weft never
-created. Choosing a name should not be enough to do that.
+A program that names an object somebody else owns is **refused**, not allowed to
+take it over — otherwise choosing a name would be enough to make Weft's owner
+reference appear on it, and deleting the `Weave` would delete something Weft
+never created.
 
 Handing an existing resource over is deliberate, and the consent lives on the
-object rather than in the `Weave` — otherwise "onboarding" would just be a
-program author helping themselves:
+object:
 
 ```bash
 kubectl annotate configmap legacy weft.run/adopt=<weave-name>
@@ -163,31 +181,25 @@ The value is a pattern, so `weft.run/adopt='*'` consents to any `Weave` in that
 namespace — the form for onboarding a set of objects at once, where naming the
 same `Weave` on each of them says nothing extra.
 
-From then on that `Weave` manages it, and deleting the `Weave` deletes it.
 [docs/ownership.md](docs/ownership.md) covers the whole story, including what
 happens when a program is edited to change what a key addresses.
 
-### Identity is the key, not the position
+### Keys are identity, not position
 
-The keys of the returned mapping are the inventory identity. Reordering a list
-cannot rename a live object. Renaming a key is not a rename: it deletes one
-resource and creates another.
+The keys of the returned mapping identify the live objects. Reordering a list
+cannot rename anything. Renaming a key is not a rename: it deletes one resource
+and creates another.
 
 ### Ordering
 
-Return order becomes apply order and therefore reverse teardown order. Cascading
-garbage collection would remove everything a `Weave` owns, but in no particular
-order, and self-reference makes the order real — a role assignment naming a
-principal has to go before the identity that owns it.
+Return order becomes apply order, and therefore reverse teardown order.
+Cascading garbage collection would remove everything a `Weave` owns but in no
+particular order, which is wrong for anything with a dependency.
 
-For a fan-out of independent siblings, put them in the same wave so they tear
-down together:
+For explicit control, annotate:
 
 ```python
-out[key] = {
-    "metadata": {"annotations": {"weft.run/wave": "1"}},
-    ...
-}
+"metadata": {"annotations": {"weft.run/wave": "1"}}
 ```
 
 Either annotate every resource or none; mixing explicit waves with positional
@@ -197,14 +209,11 @@ defaults produces an order nobody wrote, and is rejected.
 
 A dependency that is never referenced is invisible to any design that infers
 edges from expression references. Weft does not infer — the read is written, and
-what an absence means is the line after it.
+what an absence means is the line after it:
 
 ```python
-def compose(variable, observed):
-    # Nothing below reads a field off the database. Its existence is the
-    # requirement.
-    if not read("sql.azure.m.upbound.io/v1beta1", "MSSQLDatabase", "app"):
-        return wait("the database has not been created yet")
+if not read("sql.azure.m.upbound.io/v1beta1", "MSSQLDatabase", "app"):
+    return wait("the database has not been created yet")
 ```
 
 Which also expresses what a declared flag could not — a gate that depends on
@@ -215,9 +224,7 @@ if variable.useSql and not read("sql.azure.m.upbound.io/v1beta1", "MSSQLDatabase
     return wait("SQL is enabled but the database is not there yet")
 ```
 
-Turning `useSql` off releases the `Weave` with no other edit. Reading the same
-resource twice in a pass is one API call and one value, so branching on it costs
-nothing.
+Turning `useSql` off releases the `Weave` with no other edit.
 
 ### Pruning
 
@@ -235,12 +242,14 @@ period. Deleting on the first sight of that churns real infrastructure.
 
 ## The language
 
-[Starlark](https://github.com/bazelbuild/starlark), embedded in-process. See
-[docs/language.md](docs/language.md) for the full surface.
+[Starlark](https://github.com/bazelbuild/starlark), embedded in-process — Python
+you can read on sight, without the parts that make Python unsafe to run for
+somebody else. See [docs/language.md](docs/language.md) for the full surface.
 
 Untrusted authorship is the premise, so the language is bounded rather than
-trusted: no `load()`, no recursion, no clock, no randomness, no I/O, an
-execution-step budget and caps on result size. Every limit fails as a `Degraded`
+trusted: no `load()`, no recursion, no clock, no randomness, no I/O beyond
+`read()` and `select()`, an execution-step budget and caps on result size and on
+how much of a namespace one pass may pull in. Every limit fails as a `Degraded`
 condition with a distinct reason, not as a wedged controller.
 
 Considered and rejected: **CEL** cannot emit variable-length structure, so
@@ -249,29 +258,39 @@ bad programming language. **CUE** is an adoption tax with no cost budget for
 untrusted evaluation. **WASM** needs a build pipeline per composition. **Go
 templates** have unbounded recursion and `sprig` reaches the environment.
 
-The evaluator sits behind an interface — a pure function over three JSON blobs —
-so it is testable without a cluster and replaceable later.
+## Trying it
+
+[demo/](demo/) has seven `Weave`s covering staging, waiting, permission
+failures, ordered teardown, pruning, held finalizers and the evaluator's bounds,
+with a walkthrough in [demo/README.md](demo/README.md). [examples/](examples/)
+has four longer compositions taken from real Crossplane workloads.
 
 ## Operating it
-
-```bash
-weft --help
-```
-
-Notable flags:
 
 | flag | default | why you would change it |
 |---|---|---|
 | `--prune-delay` | `2m` | how long a resource must be gone before deletion |
 | `--hold-timeout` | `10m` | how long a `finalize=True` read may block somebody else's object |
-| `--max-reads` | `100` | distinct resources one evaluation may read |
 | `--teardown-timeout` | `15m` | how long ordered teardown runs before cascading collection takes over |
-| `--impersonate-groups` | `system:serviceaccounts,system:authenticated` | see [docs/rbac.md](docs/rbac.md) |
+| `--max-reads` | `100` | distinct resources one evaluation may read |
+| `--max-selected` | `500` | objects one `select()` may match |
 | `--max-steps` | `20000000` | the execution budget for one `compose()` |
+| `--impersonate-groups` | `system:serviceaccounts,system:authenticated` | see [docs/rbac.md](docs/rbac.md) |
+
+`weft --help` lists the rest. The chart exposes all of them; see
+[charts/weft/README.md](charts/weft/README.md).
 
 Editing a `Weave` converges: what the program stopped returning is pruned, what
 it started returning is applied, and what it changed under a stable key is
-replaced rather than left behind. See [docs/ownership.md](docs/ownership.md).
+replaced rather than left behind.
+
+### Metrics
+
+`weft_weave_status` reports each `Weave` as ready, waiting or degraded, so
+alerting on "degraded for more than N minutes" is a single expression. Alongside
+it: resources owned per `Weave`, evaluation duration and outcome, applies,
+prunes, permission denials by verb and resource, and active versus degraded
+watches. Enable the `ServiceMonitor` with `metrics.serviceMonitor.enabled=true`.
 
 ### Uninstalling
 
@@ -282,8 +301,9 @@ resources instead, use the verb Kubernetes already has for it:
 kubectl delete weave app --cascade=orphan
 ```
 
-If any `Weave` uses `finalize: true`, release those finalizers **before**
-removing the controller, or the objects holding them cannot be deleted:
+If any program uses `read(..., finalize=True)`, release those finalizers
+**before** removing the controller, or the objects holding them cannot be
+deleted:
 
 ```bash
 kubectl -n weft-system exec deploy/weft -- /weft reap --dry-run
@@ -295,66 +315,32 @@ helm uninstall weft --namespace weft-system
 purpose: deleting it deletes every `Weave` in the cluster, and each one deleted
 that way takes the resources it owns with it.
 
-## Observability
+## What it will not do
 
-`weft_weave_status` reports each Weave as ready, waiting or degraded, so alerting
-on "degraded for more than N minutes" is a single expression. Waiting
-deliberately is not alertable on its own — it is the normal steady state of a
-composition that spans several provisioning steps.
-
-Alongside it: resources owned per Weave, evaluation duration and outcome,
-applies, prunes, permission denials by verb and resource, and active versus
-degraded watches. Enable the `ServiceMonitor` with
-`metrics.serviceMonitor.enabled=true`.
-
-## Non-goals
-
-- Generating a CRD per composition. One CRD, forever.
-- A typed API surface for consumers. That is kro's model, and it requires the
-  platform team this project exists to remove.
-- Cross-namespace anything. Same-namespace is a hard rule and it is what makes
+- Generate a CRD per composition. One CRD, forever.
+- Offer a typed API surface for consumers. That is kro's model, and it requires
+  the platform team this project exists to remove.
+- Anything cross-namespace. Same-namespace is a hard rule, and it is what keeps
   ownership and garbage collection simple enough to need no machinery.
-- Cloud provider integration. Weft composes whatever CRDs are installed and
-  knows nothing about any of them.
+- Integrate with any cloud provider. Weft composes whatever CRDs are installed
+  and knows nothing about any of them.
 
 ## Status
 
-`v1alpha1`, and the API group is provisional. Everything derives from one
-constant so a rename is a single edit, with a test that keeps the kubebuilder
-marker honest.
+`v1alpha1`. The API group is provisional and the shape may still move.
 
-Tested at four layers. The evaluator, inventory planning, normalisation and RBAC
-diagnostics are unit tested with no dependencies. Every shipped example is
-parsed, evaluated and normalised, so a broken example fails the build. The Helm
-chart is rendered and its arguments are parsed with the binary's own flag set.
-And the reconcile loop runs against a real API server — apply and ownership,
-staging through `observed`, pruning hysteresis, ordered teardown, program
-faults, recreation, and steady-state stability.
+Tested at four layers: the evaluator, inventory planning, normalisation and RBAC
+diagnostics with no dependencies; every shipped example parsed, evaluated and
+normalised, so a broken example fails the build; the Helm chart rendered and its
+arguments parsed with the binary's own flag set; and the reconcile loop against a
+real API server — apply and ownership, staging, pruning hysteresis, ordered
+teardown, program faults, recreation, and steady-state stability.
 
 That last layer matters most: every bug found during development was in the
-reconcile loop, and none of them were visible without an API server to react to.
+reconcile loop, and none were visible without an API server to react to.
 
 Verified by hand against a live cluster with RBAC enforced, and not yet
-automated: impersonation *denial* specifically, and held finalizers.
+automated: impersonation *denial* specifically.
 
-## Development
-
-```bash
-make            # generate, fmt, vet, lint, test, build
-make envtest    # fetch the control plane the controller tests run against
-make test       # everything
-make lint       # golangci-lint, pinned to the version CI uses
-make run        # run against the current kubecontext
-make lint-chart # lint and render the Helm chart
-make deploy     # helm upgrade --install into a cluster
-```
-
-The chart and controller tests **skip** when helm or a control plane is absent,
-so read the output rather than assuming a green run covered them.
-[CONTRIBUTING.md](CONTRIBUTING.md) explains the layering, and why several of the
-tests exist.
-
-`make generate` regenerates the deepcopy functions, the CRD and the controller
-ClusterRole, and copies the CRD into the chart. Tests fail if that copy is
-stale, if the chart stops granting a permission controller-gen says the
-controller needs, or if the chart renders arguments the binary cannot parse.
+Contributions and the repository layout are covered in
+[CONTRIBUTING.md](CONTRIBUTING.md).

@@ -73,8 +73,8 @@ if not principal:
 ```
 
 ```
-NAME   READY   WAITING
-app    False   FieldUnresolved
+NAME   READY   WAITING           AGE
+app    False   FieldUnresolved   2m
 
 still waiting for principalId on the app identity
 ```

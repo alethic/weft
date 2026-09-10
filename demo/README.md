@@ -6,8 +6,7 @@ Kubernetes types so they run anywhere — including a laptop cluster.
 ## Setup
 
 ```bash
-helm install weft oci://ghcr.io/alethic/charts/weft \
-  --version 0.1.0 \
+helm install weft oci://ghcr.io/alethic/charts/weft --devel \
   --namespace weft-system --create-namespace \
   --set controller.pruneDelay=45s
 
@@ -190,10 +189,11 @@ kubectl -n weft-demo delete cm upstream
 ```
 
 The derived output is torn down first, then the finalizer is released and the
-held resource disappears. Three rules make this safe to hand to a namespace user: the
-permission to *remove* the finalizer is re-checked every pass, it is released
-after a timeout regardless of progress, and `weft reap` lifts every one Weft has
-placed.
+held resource disappears. Three rules make this safe to hand to a namespace
+user: the permission to *remove* the finalizer is re-checked every pass, it is
+released after `--hold-timeout` regardless of progress, and `weft reap` lifts
+every one Weft has placed — from `status.held`, so a program that will never
+run again is still undoable.
 
 ## 07 — every guardrail
 

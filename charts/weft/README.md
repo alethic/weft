@@ -10,18 +10,17 @@ See the [project README](../../README.md) for what a `Weave` is and
 ## Install
 
 ```bash
-helm install weft oci://ghcr.io/alethic/charts/weft \
-  --version 0.1.0 \
+helm install weft oci://ghcr.io/alethic/charts/weft --devel \
   --namespace weft-system --create-namespace
 ```
 
 The chart lives in GitHub Packages as an OCI artifact, published on every build
-of `main`. Omitting `--version` takes the newest, which on a repository that
-publishes every build means a prerelease such as `0.1.0-pre.9`; pin it for
-anything you care about.
+of `main`. No stable release is cut yet, so `--devel` is needed to resolve a
+prerelease; without it Helm looks for a `1.0`-style version and finds nothing.
+Pin an exact `--version 0.1.0-pre.23` for anything you care about.
 
 ```bash
-helm show chart oci://ghcr.io/alethic/charts/weft --version 0.1.0
+helm show chart oci://ghcr.io/alethic/charts/weft --devel
 ```
 
 The chart's `appVersion` selects the image tag, so a chart and the controller it

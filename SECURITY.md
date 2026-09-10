@@ -61,10 +61,10 @@ point, and means the grant is where the review should happen.
 of `Weave` objects a user creates. A namespace user who can create `Weave`
 objects can create many. Use quotas.
 
-**Anything a source's author writes.** Source contents are data, and a program
-may write them into an output. A user who can edit a ConfigMap a `Weave` reads
-can influence what that `Weave` produces, within the bounds of what the
-ServiceAccount may create.
+**Anything the author of a resource being read writes into it.** What a program
+reads is data, and it may write that data into an output. A user who can edit a
+ConfigMap a `Weave` reads can influence what that `Weave` produces, within the
+bounds of what the ServiceAccount may create.
 
 **Reading Secret contents into a less-protected object.** If the ServiceAccount
 can read a Secret and create a ConfigMap, a program can copy one into the other.
@@ -116,8 +116,8 @@ Filtering on `impersonatedUser` gives every change a given composition made.
   and resources they need, so a minimal Role is not much more work than `edit`.
 - Leave `crds.keep` on, so an uninstall cannot cascade into deleting every
   `Weave` and the infrastructure they own.
-- Run `weft reap` before removing the controller if any `Weave` uses
-  `finalize: true`.
+- Run `weft reap` before removing the controller if any program uses
+  `read(..., finalize=True)`.
 
 ## Supported versions
 
