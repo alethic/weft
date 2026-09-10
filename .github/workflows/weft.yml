@@ -3,8 +3,11 @@ name: weft
 on:
   workflow_dispatch:
     inputs:
-      publish:
-        description: Publish this build as a GitHub release, creating the tag if one does not exist.
+      release:
+        description: >
+          Cut a release from this commit: publish under the clean version rather
+          than a prerelease, and tag it. Which version that is comes from
+          GitVersion, so there is nothing to type.
         type: boolean
         default: false
   push:
@@ -222,7 +225,7 @@ jobs:
       packages: write
       id-token: write
     outputs:
-      version: ${{ steps.GitVersion.outputs.semVer }}
+      version: ${{ steps.version.outputs.value }}
       imageDigest: ${{ steps.push.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
@@ -238,6 +241,26 @@ jobs:
       - name: Execute GitVersion
         id: GitVersion
         uses: gittools/actions/gitversion/execute@v4
+
+      # One derived string feeds the image tags, the chart, the binary and the
+      # release tag. Nothing here is ever typed by hand, which is the only
+      # reliable way to keep two artifacts from claiming the same version while
+      # carrying different content.
+      - name: Work out the version this build publishes
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${RELEASE}" = "true" ]; then
+            # Cutting a release: the clean version, no prerelease label. Once
+            # this is tagged, GitVersion moves the next one on by itself.
+            value='${{ steps.GitVersion.outputs.majorMinorPatch }}'
+          else
+            value='${{ steps.GitVersion.outputs.semVer }}'
+          fi
+          echo "value=${value}" >> "$GITHUB_OUTPUT"
+          echo "publishing as ${value}"
+        env:
+          RELEASE: ${{ inputs.release }}
 
       - uses: azure/setup-helm@v4
         with:
@@ -259,7 +282,7 @@ jobs:
         id: tags
         run: |
           set -euo pipefail
-          version='${{ steps.GitVersion.outputs.semVer }}'
+          version='${{ steps.version.outputs.value }}'
           {
             echo "list<<TAGS"
             echo "${IMAGE}:${version}"
@@ -279,7 +302,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.tags.outputs.list }}
           build-args: |
-            VERSION=${{ steps.GitVersion.outputs.semVer }}
+            VERSION=${{ steps.version.outputs.value }}
             COMMIT=${{ github.sha }}
             DATE=${{ github.event.repository.updated_at }}
           cache-from: type=gha
@@ -311,7 +334,7 @@ jobs:
         id: chart
         run: |
           set -euo pipefail
-          version='${{ steps.GitVersion.outputs.semVer }}'
+          version='${{ steps.version.outputs.value }}'
           sed -i "s|^  digest: .*|  digest: \"${DIGEST}\"|" charts/weft/values.yaml
           helm package charts/weft --destination dist \
             --version "$version" --app-version "$version"
@@ -334,11 +357,10 @@ jobs:
     needs: publish
     permissions:
       contents: write
-    # One switch for the tag and the GitHub release together. Nothing is
-    # released implicitly: either a tag drove the build, or the run was asked
-    # for it by hand. The GitHub Packages push above is not gated by this and
-    # happens on every branch build.
-    if: github.ref_type == 'tag' || inputs.publish == true
+    # Nothing is released implicitly: either a tag drove the build, or the run
+    # was asked to cut one. The GitHub Packages push above is not gated by this
+    # and happens on every branch build.
+    if: github.ref_type == 'tag' || inputs.release == true
     steps:
       - uses: actions/checkout@v4
         with:

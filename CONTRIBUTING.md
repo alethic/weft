@@ -39,6 +39,20 @@ To move the next version, say so in a commit message:
 
 `next-version` in `GitVersion.yml` sets the floor.
 
+## Cutting a release
+
+Run the workflow by hand with **release** checked. That publishes under the
+clean version rather than a prerelease, and tags the commit with it.
+
+Do not create the tag yourself. The version is derived, so typing one is the one
+way to end up with two artifacts claiming the same version while carrying
+different content — and nothing downstream can tell them apart afterwards.
+
+Once `0.1.0` is tagged, GitVersion moves on by itself: the next commit on `main`
+is `0.1.1-pre.1`, and a commit carrying `+semver: minor` makes it `0.2.0-pre.1`.
+So the release after that is whatever `make version` reports, with no decision
+to make.
+
 The chart and the image always carry the same version. `Chart.yaml` holds a
 placeholder that is replaced at package time, and the chart's `appVersion` is
 what selects the image tag, so a packaged chart points at the image the same run
@@ -56,9 +70,9 @@ to `ghcr.io/alethic/weft` and the chart, as an OCI artifact, to
 publish job is the only one holding `packages: write`.
 
 A **GitHub release** is separate and deliberate: it happens when a tag drove the
-build, or when the workflow is run by hand with `publish` checked. The release
+build, or when the workflow is run by hand with **release** checked. The release
 action creates the tag from the derived version, so tagging is not a manual step
-either.
+either — see above.
 
 ## What CI checks
 
