@@ -14,6 +14,7 @@ appVersion: "0.1.0"
 # are both long settled by here.
 kubeVersion: ">=1.27.0-0"
 
+icon: https://raw.githubusercontent.com/alethic/weft/main/docs/icon.svg
 home: https://github.com/alethic/weft
 sources:
   - https://github.com/alethic/weft

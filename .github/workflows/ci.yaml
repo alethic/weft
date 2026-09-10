@@ -1,0 +1,123 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The chart rendering tests shell out to helm. Without it they skip, and a
+      # chart that renders unparseable arguments would sail through.
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Verify generated files are current
+        run: |
+          make generate
+          git diff --exit-code || {
+            echo "::error::generated files are stale; run 'make generate' and commit the result"
+            exit 1
+          }
+
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "::error::these files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+      # The controller tests run against a real API server. Without these
+      # binaries they skip, and the reconcile loop - where every bug found
+      # during development actually was - would go untested.
+      - name: Fetch the envtest control plane
+        run: make envtest
+
+      - run: go test ./... -count=1 -race -coverprofile=coverage.out
+
+      - name: Coverage summary
+        run: go tool cover -func=coverage.out | tail -1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - run: helm lint charts/weft
+
+      # Render the combinations the chart is expected to support, so a broken
+      # conditional is caught here rather than by whoever sets that value.
+      - name: Render supported configurations
+        run: |
+          set -euo pipefail
+          render() {
+            echo "--- $*"
+            helm template weft charts/weft --namespace weft-system "$@" >/dev/null
+          }
+          render
+          render --set metrics.serviceMonitor.enabled=true
+          render --set crds.install=false
+          render --set crds.keep=false
+          render --set controller.watchNamespace=team-a
+          render --set rbac.impersonation.scope=namespaced --set 'rbac.impersonation.namespaces={a,b}'
+          render --set replicaCount=2 --set podDisruptionBudget.enabled=true
+          render --set serviceAccount.create=false --set serviceAccount.name=existing
+
+      - name: Reject configurations that should not render
+        run: |
+          set -uo pipefail
+          refuses() {
+            if helm template weft charts/weft --namespace weft-system "$@" >/dev/null 2>&1; then
+              echo "::error::expected this to be refused: $*"
+              exit 1
+            fi
+            echo "correctly refused: $*"
+          }
+          refuses --set rbac.impersonation.scope=namespaced
+          refuses --set replicaCount=3 --set controller.leaderElection.enabled=false
+          refuses --set rbac.impersonation.scope=global
+          refuses --set controller.pruneDelay=2minutes
+          refuses --set metrics.port=99999
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

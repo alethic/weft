@@ -12,6 +12,7 @@ import (
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/kube"
+	"github.com/alethic/weft/internal/metrics"
 )
 
 // applyAll applies items in ascending wave order.
@@ -28,11 +29,13 @@ func (r *WeaveReconciler) applyAll(ctx context.Context, c *kube.Client, items []
 		for _, item := range wave {
 			out, err := c.Apply(ctx, item.Object)
 			if err != nil {
+				metrics.AppliesTotal.WithLabelValues("error").Inc()
 				if waveErr == nil {
 					waveErr = applyError(item, err)
 				}
 				continue
 			}
+			metrics.AppliesTotal.WithLabelValues("ok").Inc()
 			applied = append(applied, inventory.Entry(item, out))
 		}
 		// Stop at the wave boundary rather than at the first failure: siblings

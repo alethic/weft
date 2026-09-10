@@ -1,8 +1,16 @@
 # Weft
 IMG ?= ghcr.io/alethic/weft:latest
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
+DATE ?= $(shell git log -1 --format=%cI 2>/dev/null)
+PKG := github.com/alethic/weft/internal/version
+LDFLAGS := -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Date=$(DATE)
 CHART ?= charts/weft
 NAMESPACE ?= weft-system
-CONTROLLER_GEN ?= go run sigs.k8s.io/controller-tools/cmd/controller-gen
+CONTROLLER_GEN ?= go tool controller-gen
+SETUP_ENVTEST ?= go tool setup-envtest
+ENVTEST_K8S_VERSION ?= 1.34.x
+ENVTEST_DIR := $(CURDIR)/bin/envtest
 
 .PHONY: all
 all: generate fmt vet test build
@@ -24,17 +32,24 @@ fmt:
 vet:
 	go vet ./...
 
+.PHONY: envtest
+envtest: ## Download the control-plane binaries the controller tests run against.
+	$(SETUP_ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(ENVTEST_DIR) -p path
+
 .PHONY: test
-test: ## Unit tests, including the chart rendering tests when helm is present.
+test: ## All tests. Needs helm for the chart tests and envtest for the controller tests.
 	go test ./... -count=1
+
+.PHONY: test-all
+test-all: envtest test ## Fetch the control plane first, then run everything.
 
 .PHONY: build
 build:
-	go build -o bin/weft ./cmd/weft
+	go build -ldflags "$(LDFLAGS)" -o bin/weft ./cmd/weft
 
 .PHONY: docker-build
 docker-build:
-	docker build -t $(IMG) .
+	docker build -t $(IMG) 		--build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg DATE=$(DATE) .
 
 .PHONY: lint-chart
 lint-chart: ## Lint and render the chart.

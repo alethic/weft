@@ -28,6 +28,7 @@ import (
 
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/kube"
+	"github.com/alethic/weft/internal/metrics"
 )
 
 // ErrNotStarted is returned when the registry is used before the manager has
@@ -201,6 +202,7 @@ func (r *Registry) Ensure(weave types.NamespacedName, c *kube.Client, want []Key
 	} else {
 		r.refs[weave] = wanted
 	}
+	r.publishLocked()
 	return report, nil
 }
 
@@ -212,6 +214,7 @@ func (r *Registry) Release(weave types.NamespacedName) {
 		r.releaseLocked(weave, k)
 	}
 	delete(r.refs, weave)
+	r.publishLocked()
 }
 
 // Len reports how many informers are running, for tests and metrics.
@@ -219,6 +222,22 @@ func (r *Registry) Len() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.entries)
+}
+
+// publishLocked republishes the watch gauges. A rising degraded count means
+// ServiceAccounts are missing list and watch, which is a configuration problem
+// rather than a controller one, and is worth seeing from outside.
+func (r *Registry) publishLocked() {
+	active, degraded := 0, 0
+	for _, e := range r.entries {
+		if e.err() != nil {
+			degraded++
+			continue
+		}
+		active++
+	}
+	metrics.WatchesActive.WithLabelValues("established").Set(float64(active))
+	metrics.WatchesActive.WithLabelValues("degraded").Set(float64(degraded))
 }
 
 func (r *Registry) acquireLocked(weave types.NamespacedName, k Key, c *kube.Client) *entry {

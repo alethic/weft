@@ -33,6 +33,7 @@ import (
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/jsonutil"
 	"github.com/alethic/weft/internal/kube"
+	"github.com/alethic/weft/internal/metrics"
 	"github.com/alethic/weft/internal/naming"
 	"github.com/alethic/weft/internal/watches"
 )
@@ -175,6 +176,9 @@ func (r *WeaveReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err := r.Client.Get(ctx, req.NamespacedName, &weave); err != nil {
 		if apierrors.IsNotFound(err) {
 			r.Watches.Release(req.NamespacedName)
+			// Drop the gauges too, or they keep reporting a Weave that no
+			// longer exists and the cardinality only ever grows.
+			metrics.ForgetWeave(req.Namespace, req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
@@ -241,9 +245,11 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 			switch h.kind {
 			case haltWaiting:
 				markWaiting(weave, h.reason, h.message)
+				metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateWaiting)
 				return ctrl.Result{RequeueAfter: requeue}, nil
 			case haltDegraded:
 				markDegraded(weave, h.reason, h.message)
+				metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateDegraded)
 				r.eventf(weave, "Warning", h.reason, "%s", firstLine(h.message))
 				return ctrl.Result{RequeueAfter: r.Opts.DegradedRetry}, nil
 			}
@@ -261,9 +267,12 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 	// Resources were applied, but the program said it is not finished. Ready
 	// would be a lie here: the point of staging is that half the composition
 	// does not exist yet.
+	metrics.WeaveResources.WithLabelValues(weave.Namespace, weave.Name).Set(float64(len(weave.Status.Inventory)))
+
 	if len(pass.pending) > 0 {
 		markWaiting(weave, ReasonFieldUnresolved,
 			pass.summary+"; still waiting for "+joinWithAnd(pass.pending))
+		metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateWaiting)
 		if report.Degraded() {
 			setCondition(weave, naming.ConditionDegraded, metav1.ConditionTrue, ReasonWatchDegraded,
 				watchFailureMessage(report))
@@ -276,10 +285,12 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 		setCondition(weave, naming.ConditionWaiting, metav1.ConditionFalse, ReasonApplied, "nothing outstanding")
 		setCondition(weave, naming.ConditionDegraded, metav1.ConditionTrue, ReasonWatchDegraded,
 			watchFailureMessage(report))
+		metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateDegraded)
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
 
 	markReady(weave, pass.summary)
+	metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateReady)
 	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
@@ -322,13 +333,17 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 		return pass{}, err
 	}
 
+	started := time.Now()
 	res, err := r.Evaluator.Evaluate(ctx, eval.Request{
 		Program:  weave.Spec.Program,
 		Inputs:   jsonutil.DecodeObject(weave.Spec.Inputs),
 		Sources:  resolved.values,
 		Observed: observed,
 	})
+	metrics.EvaluationDuration.WithLabelValues(weave.Namespace, weave.Name).
+		Observe(time.Since(started).Seconds())
 	if err != nil {
+		metrics.EvaluationsTotal.WithLabelValues(metrics.OutcomeFailed).Inc()
 		var pe *eval.ProgramError
 		if errors.As(err, &pe) {
 			return pass{}, degradedf(pe.Reason, "%s", programMessage(pe))
@@ -337,8 +352,10 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 	}
 
 	if res.Waiting() {
+		metrics.EvaluationsTotal.WithLabelValues(metrics.OutcomeWaiting).Inc()
 		return pass{}, waitingf(ReasonFieldUnresolved, "%s", res.Wait.Reason)
 	}
+	metrics.EvaluationsTotal.WithLabelValues(metrics.OutcomeResolved).Inc()
 
 	owner := kube.Owner{
 		APIVersion: naming.GroupVersion,
@@ -377,6 +394,7 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 			return pass{}, waitingf(ReasonTearingDown,
 				"removing %s, which the program no longer returns", describeEntries(remaining, 5))
 		}
+		metrics.PrunesTotal.Add(float64(len(diff.Prune)))
 		r.eventf(weave, "Normal", "Pruned", "removed %d resources the program no longer returns", len(diff.Prune))
 	}
 
@@ -465,6 +483,7 @@ func (r *WeaveReconciler) finishDeletion(ctx context.Context, weave *v1alpha1.We
 		return ctrl.Result{}, err
 	}
 	r.Watches.Release(key)
+	metrics.ForgetWeave(weave.Namespace, weave.Name)
 	return ctrl.Result{}, nil
 }
 

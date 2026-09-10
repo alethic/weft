@@ -246,6 +246,18 @@ helm uninstall weft --namespace weft-system
 purpose: deleting it deletes every `Weave` in the cluster, and each one deleted
 that way takes the resources it owns with it.
 
+## Observability
+
+`weft_weave_status` reports each Weave as ready, waiting or degraded, so alerting
+on "degraded for more than N minutes" is a single expression. Waiting
+deliberately is not alertable on its own — it is the normal steady state of a
+composition that spans several provisioning steps.
+
+Alongside it: resources owned per Weave, evaluation duration and outcome,
+applies, prunes, permission denials by verb and resource, and active versus
+degraded watches. Enable the `ServiceMonitor` with
+`metrics.serviceMonitor.enabled=true`.
+
 ## Non-goals
 
 - Generating a CRD per composition. One CRD, forever.
@@ -262,22 +274,35 @@ that way takes the resources it owns with it.
 constant so a rename is a single edit, with a test that keeps the kubebuilder
 marker honest.
 
-What is covered by tests: the evaluator (semantics, waiting, bounds,
-ergonomics), inventory and wave planning, normalisation and ownership, RBAC
-diagnostics, and naming. What has been verified by hand against a live cluster:
-impersonation and denial, multi-phase staging, pruning, ordered teardown, and
-source finalizers. There is no envtest suite for the reconciler yet — the
-controller-level behaviours above were confirmed manually, and three of the bugs
-fixed during development were found that way rather than by the unit tests.
+Tested at four layers. The evaluator, inventory planning, normalisation and RBAC
+diagnostics are unit tested with no dependencies. Every shipped example is
+parsed, evaluated and normalised, so a broken example fails the build. The Helm
+chart is rendered and its arguments are parsed with the binary's own flag set.
+And the reconcile loop runs against a real API server — apply and ownership,
+staging through `observed`, pruning hysteresis, ordered teardown, program
+faults, recreation, and steady-state stability.
+
+That last layer matters most: every bug found during development was in the
+reconcile loop, and none of them were visible without an API server to react to.
+
+Verified by hand against a live cluster with RBAC enforced, and not yet
+automated: impersonation *denial* specifically, and source finalizers.
 
 ## Development
 
 ```bash
 make            # generate, fmt, vet, test, build
+make envtest    # fetch the control plane the controller tests run against
+make test       # everything
 make run        # run against the current kubecontext
 make lint-chart # lint and render the Helm chart
 make deploy     # helm upgrade --install into a cluster
 ```
+
+The chart and controller tests **skip** when helm or a control plane is absent,
+so read the output rather than assuming a green run covered them.
+[CONTRIBUTING.md](CONTRIBUTING.md) explains the layering, and why several of the
+tests exist.
 
 `make generate` regenerates the deepcopy functions, the CRD and the controller
 ClusterRole, and copies the CRD into the chart. Tests fail if that copy is

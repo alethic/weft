@@ -21,7 +21,9 @@ import (
 	"github.com/alethic/weft/internal/controller"
 	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/kube"
+	"github.com/alethic/weft/internal/metrics"
 	"github.com/alethic/weft/internal/naming"
+	"github.com/alethic/weft/internal/version"
 	"github.com/alethic/weft/internal/watches"
 )
 
@@ -39,6 +41,10 @@ func init() {
 func main() {
 	// A tiny subcommand split rather than a CLI framework: there are two modes
 	// and one of them exists only for uninstall.
+	if len(os.Args) > 1 && (os.Args[1] == "version" || os.Args[1] == "--version" || os.Args[1] == "-version") {
+		fmt.Println(version.Get())
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "reap" {
 		if err := runReap(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "weft reap: %v\n", err)
@@ -184,7 +190,12 @@ func runManager(args []string) error {
 		return err
 	}
 
-	log.Info("starting", "group", naming.Group, "version", naming.Version,
+	build := version.Get()
+	metrics.BuildInfo.WithLabelValues(build.Version, build.Commit, build.GoVersion).Set(1)
+
+	log.Info("starting",
+		"build", build.Version, "commit", build.Commit,
+		"group", naming.Group, "apiVersion", naming.Version,
 		"impersonateGroups", parseGroups(cfg.groups))
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		return fmt.Errorf("running manager: %w", err)

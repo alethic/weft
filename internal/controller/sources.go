@@ -13,6 +13,7 @@ import (
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/kube"
+	"github.com/alethic/weft/internal/metrics"
 	"github.com/alethic/weft/internal/watches"
 )
 
@@ -80,6 +81,7 @@ func (r *WeaveReconciler) resolveSources(ctx context.Context, c *kube.Client, we
 func sourceReadError(src v1alpha1.Source, gvk schema.GroupVersionKind, err error) error {
 	var perm *kube.PermissionError
 	if errors.As(err, &perm) {
+		metrics.PermissionDenialsTotal.WithLabelValues(perm.Verb, perm.Resource.Resource).Inc()
 		// The controller does not fill the gap with its own privileges. It says
 		// what to grant and stops.
 		return degradedf(ReasonForbidden, "reading source %q:\n%s", src.ID, perm.Error())
