@@ -352,8 +352,32 @@ Each value must carry `apiVersion`, `kind` and `metadata.name`.
 - Cluster-scoped kinds are rejected. A namespaced owner cannot own one, so it
   could never be garbage collected.
 
-Weft adds a `weft.run/weave` label and a `weft.run/key` annotation to everything
-it creates, so `kubectl get <kind> -l weft.run/weave=<name>` works.
+Weft stamps provenance on everything it applies:
+
+| | |
+|---|---|
+| `weft.run/weave` | label — the `Weave`'s name, so `kubectl get <kind> -l weft.run/weave=<name>` works |
+| `weft.run/weave-uid` | the `Weave`'s UID |
+| `weft.run/key` | the inventory key it was returned under |
+
+Only facts that do not change from pass to pass. A timestamp or a revision here
+would rewrite every object on every reconcile, and each of those writes is a
+watch event that wakes the `Weave` that just made it.
+
+The UID is what lets an object be reclaimed. A `Weave`'s status records what it
+made, but a status can be lost — restored from a backup, wiped, or never written
+because a pass failed between the apply and the status update — and an unowned
+resource has no owner reference to fall back on. An object carrying this
+`Weave`'s UID is taken up again rather than refused, and the event says so:
+
+```
+Normal  Reclaimed  took up ConfigMap "keeper" again, which this Weave applied
+                   before but the inventory no longer recorded
+```
+
+A name match is not enough for that, and deliberately so: a `Weave` deleted and
+recreated under the same name is a different object, and the label is something
+anyone who can write the object can set.
 
 ### `weft.run/owned: "false"`
 

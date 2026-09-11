@@ -169,6 +169,25 @@ Orphaned resources keep their `weft.run/weave` label and `weft.run/key`
 annotation. A new `Weave` that tries to produce them will be refused as
 belonging to nobody, and can be given them again with the adopt annotation.
 
+## Reclaiming what a Weave already made
+
+Everything Weft applies carries `weft.run/weave`, `weft.run/weave-uid` and
+`weft.run/key`. The `Weave`'s status records the same thing, but a status can be
+lost, and an unowned resource has no owner reference to fall back on — so
+without something written on the object, a lost inventory would leave a `Weave`
+permanently refusing to touch resources it made itself.
+
+An object carrying this `Weave`'s UID is taken up again rather than refused, and
+an event records it. The same applies to an owned resource whose owner reference
+was stripped by hand: it is reclaimed, and applying it again puts the reference
+back.
+
+The UID, not the name. A `Weave` deleted and recreated under the same name is a
+different object, and its predecessor's resources are not automatically its to
+take back — otherwise the label, which anybody who can write the object can set,
+would be a way to hand Weft something it never made. Those need the adopt
+annotation like anything else.
+
 ## Two keys cannot name one object
 
 A key is the identity of a resource in the inventory. Two of them addressing one
@@ -234,6 +253,8 @@ The record moves; the object does not move at all.
 | object exists, this `Weave` owns it | updated |
 | object exists, another `Weave` owns it | refused; no annotation helps |
 | object exists, nobody owns it | refused, with the annotate command |
+| object exists and carries this `Weave`'s UID | reclaimed, with an event |
+| object exists and carries a different `Weave`'s UID | refused; the annotation is not consent |
 | object exists and is annotated for this `Weave` | adopted, with an event |
 | two keys name one object | refused |
 | a key changes name or kind | new one applied, old one deleted |

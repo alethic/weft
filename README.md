@@ -181,6 +181,12 @@ The value is a pattern, so `weft.run/adopt='*'` consents to any `Weave` in that
 namespace — the form for onboarding a set of objects at once, where naming the
 same `Weave` on each of them says nothing extra.
 
+Everything Weft applies is stamped with `weft.run/weave`, `weft.run/weave-uid`
+and `weft.run/key`, so an object carries the record of what made it. A `Weave`
+whose status was lost reclaims what it recognises rather than refusing to touch
+it — which matters most for unowned resources, since those have no owner
+reference to fall back on.
+
 [docs/ownership.md](docs/ownership.md) covers the whole story, including what
 happens when a program is edited to change what a key addresses.
 

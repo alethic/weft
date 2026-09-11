@@ -66,14 +66,37 @@ func IsHeldFinalizer(f string) bool {
 	return len(f) > len(HeldFinalizerPrefix) && f[:len(HeldFinalizerPrefix)] == HeldFinalizerPrefix
 }
 
-// Label and annotation keys stamped onto every resource Weft creates.
+// Provenance stamped onto every resource Weft applies.
+//
+// Together these are the record on the object itself of what made it, which
+// Weave, and under what identity. The Weave's own status says the same thing,
+// but a status can be lost - restored from a backup, wiped, or never written
+// because a pass failed between the apply and the status update. An object that
+// carries its own provenance can be reclaimed from that; one that does not has
+// to be adopted by hand.
+//
+// It is deliberately only facts that do not change from pass to pass. A
+// timestamp or a revision here would rewrite every object on every reconcile,
+// and every one of those writes is a watch event that wakes the Weave that just
+// made it.
 var (
-	// WeaveLabel names the Weave that owns a resource. A label (not an
+	// WeaveLabel names the Weave that applied a resource. A label (not an
 	// annotation) so outputs are selectable with kubectl.
 	WeaveLabel = Group + "/weave"
+
+	// WeaveUIDAnnotation records the UID of the Weave that applied it.
+	//
+	// The name is not enough on its own. A Weave deleted and recreated with the
+	// same name is a different object with a different UID, and its
+	// predecessor's unowned resources are not automatically its to take back -
+	// whereas a UID match is the same Weave, whatever happened to its status in
+	// between.
+	WeaveUIDAnnotation = Group + "/weave-uid"
+
 	// KeyAnnotation records the inventory key a resource was created under.
 	// This is the stable identity returned by compose(), not the object name.
 	KeyAnnotation = Group + "/key"
+
 	// WaveAnnotation optionally overrides a resource's teardown wave. Lower
 	// waves are applied first and deleted last.
 	WaveAnnotation = Group + "/wave"
@@ -93,7 +116,7 @@ var (
 	// it.
 	OwnedAnnotation = Group + "/owned"
 
-	// AdoptAnnotation opts an existing object	// AdoptAnnotation opts an existing object into being taken over by a Weave.
+	// AdoptAnnotation opts an existing object into being taken over by a Weave.
 	// Its value is a name, or a pattern: "*" consents to any Weave in this
 	// namespace, and "app-*" to any whose name starts with app-.
 	//

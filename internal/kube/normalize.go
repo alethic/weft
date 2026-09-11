@@ -106,6 +106,7 @@ func Normalize(obj map[string]any, key, namespace string, owner Owner, owned boo
 		annotations = map[string]string{}
 	}
 	annotations[naming.KeyAnnotation] = key
+	annotations[naming.WeaveUIDAnnotation] = string(owner.UID)
 	u.SetAnnotations(annotations)
 
 	return u, nil

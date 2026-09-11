@@ -96,6 +96,21 @@ func (r *WeaveReconciler) checkOwnership(
 				"cannot name one: whichever applies last would win, and the other would be recorded "+
 				"pointing at something it does not control.",
 			owner.key, item.Key, gvk.Kind, name)
+
+	case owner.reclaimed:
+		// Ours by provenance but absent from the inventory: a status that was
+		// lost, or an unowned resource that left the returned set and has come
+		// back. Taking it up again is right - it is our object - but it is not
+		// silent, because "Weft started managing this again" is the kind of
+		// thing somebody looking at the object later wants to be able to find.
+		//
+		// After the key-collision check, not before it: an object reclaimed
+		// under a different key than it was applied with is still two keys
+		// naming one object.
+		r.eventf(weave, "Normal", "Reclaimed",
+			"took up %s %q again, which this Weave applied before but the inventory no longer recorded",
+			gvk.Kind, name)
+		return nil
 	}
 
 	// Ours, under this key, but the inventory did not know - a status that was
@@ -105,8 +120,19 @@ func (r *WeaveReconciler) checkOwnership(
 
 // weftOwnership is what an existing object says about who made it.
 type weftOwnership struct {
-	// ours is true when this Weave already owns the object.
+	// ours is true when this Weave made the object: it carries our owner
+	// reference, or it carries our UID in its provenance.
 	ours bool
+
+	// reclaimed is true when ours was established from the provenance
+	// annotation rather than an owner reference. That is a real event - the
+	// inventory had lost the object - and worth reporting as one.
+	reclaimed bool
+
+	// weave is the name recorded in the provenance, when there is one. Used to
+	// describe an object made by a different Weave that carries no owner
+	// reference, which is what an unowned resource looks like.
+	weave string
 	// key is the inventory key it was created under, when Weft made it.
 	key string
 	// otherWeave names a different Weave that owns it, when one does.
@@ -141,14 +167,16 @@ func (o weftOwnership) adoptableBy(weave string) bool {
 
 // weftOwner reports whether an object was created by this Weave.
 //
-// The owner reference is what decides it, because that is what garbage
-// collection acts on. The label and annotation are read only to describe what
-// was found.
+// An owner reference decides it where there is one, because that is what
+// garbage collection acts on. Where there is not - every unowned resource, and
+// any owned one whose reference was stripped - the provenance annotation
+// decides it instead. The rest is read only to describe what was found.
 func weftOwner(obj *unstructured.Unstructured, weave *v1alpha1.Weave) weftOwnership {
 	annotations := obj.GetAnnotations()
 	out := weftOwnership{
 		key:   annotations[naming.KeyAnnotation],
 		adopt: annotations[naming.AdoptAnnotation],
+		weave: obj.GetLabels()[naming.WeaveLabel],
 	}
 
 	for _, ref := range obj.GetOwnerReferences() {
@@ -161,6 +189,22 @@ func weftOwner(obj *unstructured.Unstructured, weave *v1alpha1.Weave) weftOwners
 			out.otherWeave = ref.Name
 			return out
 		}
+	}
+
+	// No owner reference, which is what an unowned resource always looks like
+	// and what an owned one looks like after somebody stripped it. The
+	// provenance is then the only record that this Weave made the object, and
+	// it is the record that lets it be reclaimed rather than refused.
+	//
+	// The UID is what makes this safe to do silently. Matching on the name
+	// would let a Weave recreated under the same name help itself to its
+	// predecessor's resources, and would make the label - which anybody who can
+	// write the object can set - into a way to hand Weft something it never
+	// made.
+	if annotations[naming.WeaveUIDAnnotation] == string(weave.UID) {
+		out.ours = true
+		out.reclaimed = true
+		return out
 	}
 
 	if managers := obj.GetManagedFields(); len(managers) > 0 {
