@@ -207,20 +207,19 @@ kubectl -n weft-demo get weave -o custom-columns=\
 bound-budget           ProgramBudgetExceeded
 bound-cluster-scoped   ClusterScoped
 bound-load             ProgramLoadNotAllowed
-bound-cycle            ProgramInvalidOutput
-bound-unknown-need     ProgramInvalidOutput
+bound-declared-twice   ProgramInvalidOutput
 bound-namespace        ProgramInvalidOutput
 bound-owner            ProgramInvalidOutput
 bound-recursion        ProgramFailed
 bound-typo             ProgramFailed
 ```
 
-Nine ways to be wrong, nine distinguishable reasons, and a controller that is
-still running. `bound-typo` is worth reading — a mistyped field names itself and
-lists the ones that exist, rather than quietly becoming `None` and rendering a
-resource with a blank field:
+Eight ways to be wrong, eight distinguishable reasons, and a controller that is
+still running. `bound-typo` is worth reading. A field that is not set reads as
+`None`, but reaching *through* one does not, so a path that assumed an object
+where there is nothing fails where it happened:
 
-> object has no field "dta" (has: apiVersion, data, kind, metadata)
+> NoneType has no .tenantId field or method
 
 **Delete these when you are done.** `bound-budget` re-evaluates on every degraded
 retry, which is bounded but not free.

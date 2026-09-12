@@ -153,8 +153,9 @@ func TestBuildRejectsAnUnknownDependency(t *testing.T) {
 	}
 }
 
-// A cycle is reported rather than broken. Breaking one silently produces an
-// apply order that looks fine and is not.
+// A cycle cannot be built through resource(), which only accepts something
+// already declared - but the planner is what would hang on one, so it checks
+// rather than trusting that argument.
 func TestBuildRejectsADependencyCycle(t *testing.T) {
 	_, err := Build([]eval.Resource{
 		dependent("a", "c"),

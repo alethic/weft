@@ -15,8 +15,8 @@ never created. Choosing a name should not be enough to do that.
 So a resource that already exists and is not Weft's produces:
 
 ```
-resource "legacy" would create ConfigMap "legacy", which already exists and this
-Weave did not create.
+this program declares ConfigMap "legacy", which already exists and this Weave
+did not create.
 
 It was last written by "kubectl-create".
 
@@ -103,8 +103,8 @@ instead.
 ## Opting a resource out of ownership
 
 A resource annotated `weft.run/owned: "false"` is applied without an owner
-reference. Weft keeps it current for as long as the program returns it, and
-never deletes it: not when it leaves the returned set, not when the `Weave` is
+reference. Weft keeps it current for as long as the program declares it, and
+never deletes it: not when it stops being declared, not when the `Weave` is
 deleted.
 
 ```python
@@ -118,7 +118,7 @@ This is the per-resource form of `--cascade=orphan`, decided by whoever wrote
 the composition rather than by whoever deletes the `Weave`. Reach for it when
 the object outlives the thing describing it.
 
-Leaving the returned set drops the inventory entry immediately, with no
+Ceasing to declare it drops the inventory entry immediately, with no
 hysteresis: hysteresis exists to avoid destroying something over a transient
 absence, and nothing here is destroyed. An event records it, and the object
 keeps its `weft.run/weave` label.
@@ -165,14 +165,14 @@ real consequence for something that existed first. If you want it handed back
 rather than destroyed, release it with `--cascade=orphan` — and if you want it
 back under management later, annotate it again.
 
-Orphaned resources keep their `weft.run/weave` label and `weft.run/key`
+Orphaned resources keep their `weft.run/weave` label and `weft.run/weave-uid`
 annotation. A new `Weave` that tries to produce them will be refused as
 belonging to nobody, and can be given them again with the adopt annotation.
 
 ## Reclaiming what a Weave already made
 
 Everything Weft applies carries `weft.run/weave`, `weft.run/weave-uid` and
-`weft.run/key`. The `Weave`'s status records the same thing, but a status can be
+`weft.run/weave-uid`. The `Weave`'s status records the same thing, but a status can be
 lost, and an unowned resource has no owner reference to fall back on — so
 without something written on the object, a lost inventory would leave a `Weave`
 permanently refusing to touch resources it made itself.
@@ -188,62 +188,34 @@ take back — otherwise the label, which anybody who can write the object can se
 would be a way to hand Weft something it never made. Those need the adopt
 annotation like anything else.
 
-## Two keys cannot name one object
+## Renaming is a prune and a create
 
-A key is the identity of a resource in the inventory. Two of them addressing one
-object is a contradiction — whichever applied last would win, and the other
-would be recorded pointing at something it does not control — so it is refused:
+A resource is identified by the object it describes. There is no slot for a
+rename to happen inside: editing a program to change a name or a kind is one
+object no longer declared and another declared in its place.
 
-```
-resources "first" and "second" both produce ConfigMap "shared".
-```
-
-## When a program changes what a key addresses
-
-The key is the identity; the name and kind are what it currently addresses.
-Editing a program to change either, under a key it still returns, means the old
-object has to go — or it is orphaned: present in the cluster, absent from every
-record, never cleaned up.
-
-That was the worst property of the arrangement Weft replaces, where `kubectl
-apply` without `--prune` left objects behind and reclaiming them was a manual
-job.
-
-```yaml
-# before
-"thing": {"kind": "ConfigMap", "metadata": {"name": "thing-one"}}
-# after
-"thing": {"kind": "ConfigMap", "metadata": {"name": "thing-two"}}
-```
-
-`thing-two` is created, then `thing-one` is deleted. In between, the old object
-is recorded in `status.superseded` rather than in the inventory, because the key
-it used to occupy now records its replacement:
-
-```bash
-kubectl get weave editable -o jsonpath='{.status.superseded}'
-```
-
-Replacements are removed in reverse wave order, the same as everything else, and
-no hysteresis applies. A replacement is a statement rather than an absence: the
-program said the object is different, so there is nothing to wait out.
-
-An unowned object is released here instead of deleted, for the same reason it is
-released anywhere else — otherwise "do not delete this" would quietly mean
-"unless the program is edited", which is not what it says.
-
-## When an object moves to a different key
-
-The opposite edit — the same object returned under a new key — deletes nothing.
-The object is still wanted, just recorded elsewhere, and pruning it would
-destroy live state that the very same evaluation asked for.
-
-```yaml
+```python
 # before                                    # after
-"old-key": {"metadata": {"name": "x"}}      "new-key": {"metadata": {"name": "x"}}
+resource({"kind": "ConfigMap",              resource({"kind": "ConfigMap",
+          "metadata": {"name": "one"}})               "metadata": {"name": "two"}})
 ```
 
-The record moves; the object does not move at all.
+`two` is created. `one` stops being declared, so it is pruned like anything else
+that stopped being declared — which means it waits out `--prune-delay` first,
+and the two exist alongside each other until it does.
+
+That delay is the honest cost of saying it this way. An earlier design gave a
+resource a key of its own so a rename could be recognised as a replacement and
+ordered — new applied, old deleted immediately — but the key was a slot that
+existed only for the controller's benefit, and nothing an author has. Stop
+declaring one thing and start declaring another is what a rename *is*.
+
+Declaring the same object twice is refused rather than treated as two:
+
+```
+ConfigMap v1/settings is declared twice. An object is one thing, so two
+declarations cannot mean two of them
+```
 
 ## Summary
 
@@ -256,10 +228,9 @@ The record moves; the object does not move at all.
 | object exists and carries this `Weave`'s UID | reclaimed, with an event |
 | object exists and carries a different `Weave`'s UID | refused; the annotation is not consent |
 | object exists and is annotated for this `Weave` | adopted, with an event |
-| two keys name one object | refused |
-| a key changes name or kind | new one applied, old one deleted |
-| an object moves to a new key | record moves, object untouched |
-| a key stops being returned | pruned, after the delay |
+| the same object is declared twice | refused |
+| a declared object changes name or kind | the new one is created, the old one pruned after the delay |
+| an object stops being declared | pruned, after the delay |
 | the `Weave` is deleted | its resources are deleted, in reverse wave order |
 | a resource is annotated `weft.run/owned: "false"` | never deleted; released when it leaves the set |
 | the `Weave` is deleted with `--cascade=orphan` | resources kept, owner references stripped |

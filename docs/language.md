@@ -7,32 +7,49 @@ deterministic dialect of Python — in-process, once per reconcile.
 
 ```python
 def compose(variable):
-    return {"key": {...resource...}, ...}
+    resource({...})
 ```
 
-| argument | is |
-|---|---|
-| `variable` | `spec.variables`, assembled into one mapping. Keys, not resources. |
-| `observed` | resources this `Weave` previously created, keyed by inventory key, read back live with current status. |
-
+`variable` is `spec.variables`, assembled into one mapping. Keys, not resources.
 Everything else in the namespace is reached with `read()` and `select()`.
 
-The return value is a mapping of **stable key** to resource. The key is the
-identity of the live object: reordering the mapping cannot rename anything, and
-changing a key deletes one resource and creates another.
+Declaring is the act. `resource()` says an object should exist, and that is the
+whole statement — there is nothing to collect and hand back. An object is
+identified by its `apiVersion`, `kind` and `name`, which is the only identity
+anything outside the program can see, so declaring the same object twice is an
+error rather than two objects.
 
-Return order is apply order, and therefore reverse teardown order.
+Declaration order is apply order, and therefore reverse teardown order.
 
-Three returns are meaningful:
+Two returns are meaningful:
 
 ```python
-return {...}          # this is what should exist
-return {}             # nothing should exist; anything left over is pruned
+return                # done; whatever was declared is what should exist
 return wait("...")    # cannot proceed at all yet, and here is why
 ```
 
+Returning early keeps what was already declared, which is what makes staging
+safe: a composition that gets half way and stops has said that half of it should
+exist, not that none of it should.
+
+Declaring nothing means nothing should exist, and anything left over is pruned.
+
 `fail("...")` reports a permanent error and lands on the `Degraded` condition
 with a backtrace.
+
+### `resource(body, needs=None)`
+
+```python
+identity = resource({
+    "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
+    "kind": "UserAssignedIdentity",
+    "metadata": {"name": variable.prefix + "-app"},
+    "spec": {...},
+})
+```
+
+It returns a handle. Two things hang off it: other resources can say they depend
+on it, and it carries what that object looks like in the cluster right now.
 
 ### Gating on a resource
 
@@ -57,19 +74,22 @@ Turning `useSql` off releases the `Weave` with no other edit.
 
 ### `pending(reason)`
 
-`wait()` produces **no resources**. That makes it the wrong tool for staging: a
-composition that creates an identity and then role assignments consuming it
-would never create the identity, so it could never advance past the wait.
+`wait()` discards everything, whether or not it was declared first. That makes
+it the wrong tool for staging: a composition that creates an identity and then
+role assignments consuming it would never create the identity, so it could never
+advance past the wait.
 
 `pending()` is the other half. It notes something unresolved without stopping
 the evaluation, so what is ready gets applied and the Weave still reports that
 it has not finished:
 
 ```python
-principal = get(observed, ["identity", "status", "atProvider", "principalId"])
+identity = resource({...})
+
+principal = get(identity.observed, "status.atProvider.principalId")
 if not principal:
     pending("principalId on the app identity")
-    return out                     # the identity is applied; nothing else is
+    return                         # the identity is applied; nothing else is
 ```
 
 ```
@@ -339,9 +359,10 @@ The Starlark universe is otherwise intact: `len`, `range`, `sorted`,
 `set`, string methods, list and dict comprehensions, `print` (to the controller
 log), and `fail`.
 
-## Rules for returned resources
+## Rules for declared resources
 
-Each value must carry `apiVersion`, `kind` and `metadata.name`.
+Every body must carry `apiVersion`, `kind` and `metadata.name`: together they
+are the resource's identity.
 
 - `metadata.namespace` may be omitted or match the Weave's. Anything else is
   rejected: same-namespace is what makes plain ownership sufficient.
@@ -351,8 +372,8 @@ Each value must carry `apiVersion`, `kind` and `metadata.name`.
   apply, so a resource needs a stable name.
 - `status` is dropped. It is a subresource and is never applied.
 - Server-populated metadata (`uid`, `resourceVersion`, `creationTimestamp`,
-  `managedFields`, …) is dropped, because deriving an output from an `observed`
-  object is a normal thing to do and drags all of it along.
+  `managedFields`, …) is dropped, because deriving one resource from another's
+  `observed` state is a normal thing to do and drags all of it along.
 - Cluster-scoped kinds are rejected. A namespaced owner cannot own one, so it
   could never be garbage collected.
 
@@ -362,7 +383,6 @@ Weft stamps provenance on everything it applies:
 |---|---|
 | `weft.run/weave` | label — the `Weave`'s name, so `kubectl get <kind> -l weft.run/weave=<name>` works |
 | `weft.run/weave-uid` | the `Weave`'s UID |
-| `weft.run/key` | the inventory key it was returned under |
 
 Only facts that do not change from pass to pass. A timestamp or a revision here
 would rewrite every object on every reconcile, and each of those writes is a
@@ -383,60 +403,73 @@ A name match is not enough for that, and deliberately so: a `Weave` deleted and
 recreated under the same name is a different object, and the label is something
 anyone who can write the object can set.
 
-### `weft.run/needs`
-
-Names the keys a resource depends on, comma-separated:
+### `needs`
 
 ```python
-"metadata": {
-    "name": "app-db",
-    "annotations": {"weft.run/needs": "sqlserver,sqlcmd-script"},
-}
+identity = resource({...})
+
+for role in variable.roles:
+    resource({...}, needs=identity)
 ```
 
-**Nothing needs annotating for the order to be right.** A resource that says
-nothing depends on the one returned before it, which is what the control flow of
+**Nothing needs declaring for the order to be right.** A resource that says
+nothing depends on the one declared before it, which is what the control flow of
 a composition already means — an `if` that creates a thing before the things
 consuming it has expressed the order. Apply order is that order; teardown is its
 reverse.
 
-What the annotation buys is parallelism. Teardown waits for a wave to be
-confirmed gone before starting the next, so a composition that says nothing is
-torn down one object at a time, and a managed resource takes minutes to delete.
-Siblings that depend on something in common but not on each other say so and go
-together:
+What `needs` buys is parallelism. Teardown waits for a wave to be confirmed gone
+before starting the next, so a composition that says nothing is torn down one
+object at a time, and a managed resource takes minutes to delete. Siblings that
+depend on something in common but not on each other say so and go together:
+seven role assignments naming one identity come out at the same depth, which is
+one wait instead of seven.
+
+It takes a resource or a list of them, and it takes the **value** `resource()`
+returned rather than a name. The program already holds the thing; making it name
+that thing again as a string is where a typo would come from, and a misspelled
+variable is an undefined name with a backtrace rather than an ordering that is
+quietly wrong.
+
+`needs=[]` means "nothing at all", which is how siblings built in a loop escape
+being chained to one another by their position:
 
 ```python
-for role in variable.roles:
-    out["ra-" + role.name] = {
-        ...,
-        "annotations": {"weft.run/needs": "identity"},
-    }
+for suffix in ["app", "keda"]:
+    resource({...}, needs=[])
 ```
-
-Seven role assignments naming one identity come out at the same depth — one wait
-instead of seven. The empty value, `"weft.run/needs": ""`, means "nothing",
-which is how a set of siblings built in a loop escapes being chained to each
-other.
 
 Waves are derived, never written: a resource's wave is its depth in the
 dependency graph, `1 + max(depth of what it needs)`. `status.inventory` records
 the result.
 
-Because dependencies are keys rather than numbers, they are checkable. A name
-matching no returned key is an error, not a silently wrong order:
+A cycle cannot be built. `needs` takes a resource that has already been
+declared, so every edge points backwards and the graph is acyclic by
+construction — there is no forward reference to close a loop with. The
+controller still checks, because a check that can never fire costs nothing and
+the alternative is trusting that argument forever.
 
-```
-resource "assignment" needs "idenity", which this program does not return
+### `observed`
+
+```python
+identity = resource({...})
+principal = get(identity.observed, "status.atProvider.principalId")
 ```
 
-A cycle is reported rather than broken — the program has said something
-impossible, and which edge is wrong is not the controller's to guess.
+What that object looks like in the cluster right now, or `None` before it
+exists. It hangs off the resource because it is a fact about that resource, and
+because a program holding the value has no business looking it up by name.
+
+Self-reference through `observed` is how a composition advances in stages:
+declare an identity, and declare the things that consume the `principalId` its
+provider writes back minutes later only once it is there. A resource Weft
+created behaves exactly like an external one that is not ready, and one rule
+covers both.
 
 ### `weft.run/owned: "false"`
 
 An unowned resource is applied and kept current like any other, but no owner
-reference is placed on it. It is not deleted when the program stops returning
+reference is placed on it. It is not deleted when the program stops declaring
 it, and not collected when the `Weave` is deleted:
 
 ```python
@@ -456,7 +489,7 @@ remember not to delete it, but then the guarantee would hold only while this
 controller is running and correct, which is the one moment it needs not to
 depend on.
 
-When such a resource leaves the returned set, the inventory entry is dropped at
+When such a resource stops being declared, the inventory entry is dropped at
 once — there is no hysteresis, because nothing is being destroyed — and an event
 records what was let go. It keeps its `weft.run/weave` label, so it is still
 findable as something this `Weave` once made.
@@ -475,48 +508,45 @@ Two phases and a fan-out, which between them cover most of what compositions do:
 
 ```python
 def compose(variable):
-    out = {}
-
     rg = read("azure.m.upbound.io/v1beta1", "ResourceGroup", variable.resourceGroupName)
     rg_id = require(rg, "status.atProvider.id")
 
-    out["identity"] = {
+    name = variable.prefix + "-app"
+    identity = resource({
         "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
         "kind": "UserAssignedIdentity",
         "metadata": {
-            "name": variable.prefix + "-app",
+            "name": name,
             "annotations": {
                 "crossplane.io/external-name":
-                    rg_id + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/" + variable.prefix + "-app",
+                    rg_id + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/" + name,
             },
         },
         "spec": {
             "providerConfigRef": variable.providerConfigRef,
             "forProvider": {
-                "name": variable.prefix + "-app",
+                "name": name,
                 "location": variable.location,
                 "resourceGroupName": variable.resourceGroupName,
             },
         },
-    }
+    })
 
     # The provider writes principalId back minutes after the apply returns.
-    # Until it lands, emit only what exists so far.
-    principal = get(observed, ["identity", "status", "atProvider", "principalId"])
+    # Until it lands, declare only what exists so far.
+    principal = get(identity.observed, "status.atProvider.principalId")
     if not principal:
-        return out
+        pending("principalId on the app identity")
+        return
 
+    # Each names the identity it grants a role to and none of them names
+    # another, so they come out at one depth and tear down in a single step
+    # rather than one round trip at a time.
     for role in variable.roles:
-        out["ra-" + role.name] = {
+        resource({
             "apiVersion": "authorization.azure.m.upbound.io/v1beta1",
             "kind": "RoleAssignment",
-            "metadata": {
-                "name": variable.prefix + "-" + role.name,
-                # Each names the identity it grants a role to. None of them
-                # needs another, so they come out at one depth and tear down
-                # in a single step rather than one round trip at a time.
-                "annotations": {"weft.run/needs": "identity"},
-            },
+            "metadata": {"name": variable.prefix + "-" + role.name},
             "spec": {
                 "providerConfigRef": variable.providerConfigRef,
                 "forProvider": {
@@ -525,7 +555,5 @@ def compose(variable):
                     "scope": role.scope,
                 },
             },
-        }
-
-    return out
+        }, needs=identity)
 ```

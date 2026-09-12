@@ -15,7 +15,7 @@ That ServiceAccount needs, in the Weave's own namespace:
 - `get` on every kind the program calls `read()` on, and `list` on every kind it
   calls `select()` on. `watch` too, for both, if you want changes noticed
   immediately rather than on the poll interval.
-- `get`, `create` and `patch` on every kind the program returns. Server-side
+- `get`, `create` and `patch` on every kind the program declares. Server-side
   apply requires `patch`.
 - `delete` on those kinds, for pruning and teardown.
 - `update` on anything read with `hold=True`.

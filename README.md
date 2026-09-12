@@ -42,14 +42,12 @@ spec:
         if not tenant:
             return wait("no tenant ConfigMap in this namespace yet")
 
-        return {
-            "settings": {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {"name": variable.prefix + "-settings"},
-                "data": {"tenantId": require(tenant, "data.tenantId")},
-            },
-        }
+        resource({
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": variable.prefix + "-settings"},
+            "data": {"tenantId": require(tenant, "data.tenantId")},
+        })
 ```
 
 ```console
@@ -181,14 +179,14 @@ The value is a pattern, so `weft.run/adopt='*'` consents to any `Weave` in that
 namespace — the form for onboarding a set of objects at once, where naming the
 same `Weave` on each of them says nothing extra.
 
-Everything Weft applies is stamped with `weft.run/weave`, `weft.run/weave-uid`
-and `weft.run/key`, so an object carries the record of what made it. A `Weave`
+Everything Weft applies is stamped with `weft.run/weave` and
+`weft.run/weave-uid`, so an object carries the record of what made it. A `Weave`
 whose status was lost reclaims what it recognises rather than refusing to touch
 it — which matters most for unowned resources, since those have no owner
 reference to fall back on.
 
 [docs/ownership.md](docs/ownership.md) covers the whole story, including what
-happens when a program is edited to change what a key addresses.
+happens when a program is edited to declare a different object.
 
 An individual resource can opt out of being owned, so that it outlives the
 composition describing it:
@@ -201,19 +199,19 @@ composition describing it:
 ```
 
 Weft applies it and keeps it current, but places no owner reference: it is not
-deleted when the program stops returning it, and not collected when the `Weave`
+deleted when the program stops declaring it, and not collected when the `Weave`
 is deleted. The absence of the reference is what makes that true whether or not
 this controller is running.
 
-### Keys are identity, not position
+### A resource is its object
 
-The keys of the returned mapping identify the live objects. Reordering a list
-cannot rename anything. Renaming a key is not a rename: it deletes one resource
-and creates another.
+`apiVersion`, `kind` and `name` are the whole identity — there is no key beside
+them. Renaming what a program declares is one object no longer declared and
+another declared in its place: the new one is created, the old one pruned.
 
 ### Ordering
 
-Return order becomes apply order, and therefore reverse teardown order.
+Declaration order becomes apply order, and therefore reverse teardown order.
 Cascading garbage collection would remove everything a `Weave` owns but in no
 particular order, which is wrong for anything with a dependency. The `if`
 statements in a composition already put a thing before the things that consume
@@ -224,13 +222,17 @@ confirmed gone before the next, and a managed resource takes minutes to delete.
 Siblings that depend on something in common but not on each other can say so:
 
 ```python
-"metadata": {"annotations": {"weft.run/needs": "identity"}}
+identity = resource({...})
+
+for role in variable.roles:
+    resource({...}, needs=identity)
 ```
 
-Seven role assignments that all name the same identity come out at the same
-depth and are deleted together — one wait instead of seven. Ordering is derived
-from what you name, never written as a number, so a dependency on a key the
-program does not return is an error rather than a silently wrong order.
+Seven role assignments naming one identity come out at the same depth and are
+deleted together — one wait instead of seven. Waves are derived from what each
+resource names, never written as a number, and `needs` takes the value
+`resource()` returned rather than a name, so a misspelling is an undefined
+variable with a backtrace rather than an ordering that is quietly wrong.
 
 ### Waiting on a resource nothing reads
 
@@ -264,7 +266,7 @@ in a single pass generate watch events of their own, so a count of them measures
 controller activity rather than elapsed time; in testing, a removed resource
 accumulated 79 "consecutive evaluations" in 56 seconds. A managed resource drops
 its status for as long as its provider takes to restart, and a program waiting
-on that status legitimately stops returning what depends on it for that whole
+on that status legitimately stops declaring what depends on it for that whole
 period. Deleting on the first sight of that churns real infrastructure.
 
 ## The language
@@ -307,9 +309,8 @@ has four longer compositions taken from real Crossplane workloads.
 `weft --help` lists the rest. The chart exposes all of them; see
 [charts/weft/README.md](charts/weft/README.md).
 
-Editing a `Weave` converges: what the program stopped returning is pruned, what
-it started returning is applied, and what it changed under a stable key is
-replaced rather than left behind.
+Editing a `Weave` converges: what the program stopped declaring is pruned, and
+what it started declaring is applied.
 
 ### Metrics
 

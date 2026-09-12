@@ -72,9 +72,9 @@ func (r *WeaveReconciler) checkOwnership(
 		// Another Weave owns it and would keep re-applying it. Adoption cannot
 		// resolve that; the two would simply fight over the object.
 		return degradedf(ReasonNotOurs,
-			"resource %q would create %s %q, which the Weave %q already owns. Two Weaves cannot manage one "+
+			"this program declares %s %q, which the Weave %q already owns. Two Weaves cannot manage one "+
 				"object: they would apply over each other on every reconcile. Remove it from one of them.",
-			item.Ref, gvk.Kind, name, owner.otherWeave)
+			gvk.Kind, name, owner.otherWeave)
 
 	case !owner.ours && !owner.adoptableBy(weave.Name):
 		return degradedf(ReasonNotOurs, "%s", adoptionMessage(item, existing, owner, weave.Name))
@@ -203,8 +203,8 @@ func weftOwner(obj *unstructured.Unstructured, weave *v1alpha1.Weave) weftOwners
 // adoptionMessage explains the refusal and what to do about it.
 func adoptionMessage(item inventory.Item, existing *unstructured.Unstructured, owner weftOwnership, ownerName string) string {
 	gvk := item.GroupVersionKind()
-	msg := fmt.Sprintf("resource %q would create %s %q, which already exists and this Weave did not create.",
-		item.Ref, gvk.Kind, item.Object.GetName())
+	msg := fmt.Sprintf("this program declares %s %q, which already exists and this Weave did not create.",
+		gvk.Kind, item.Object.GetName())
 
 	if owner.manager != "" {
 		msg += fmt.Sprintf("\n\nIt was last written by %q.", owner.manager)

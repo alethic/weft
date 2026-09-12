@@ -121,26 +121,6 @@ spec:
             },
             })
 ---
-# A cycle is reported rather than broken. Breaking one silently would produce an
-# apply order that looks fine and is not, and the program has said something
-# impossible - which edge is wrong is not ours to guess.
-apiVersion: weft.run/v1alpha1
-kind: Weave
-metadata:
-  name: bound-cycle
-  namespace: weft-demo
-spec:
-  serviceAccountName: composer
-  program: |
-    def compose(variable):
-        a = resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}})
-        b = resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "b"}},
-                     needs=[a])
-        # Starlark has no forward references, so a cycle takes a mutation to
-        # build - which is itself a sign of how hard the shape makes it.
-        resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"}},
-                 needs=[b])
----
 # Declaring one object twice cannot mean two objects.
 apiVersion: weft.run/v1alpha1
 kind: Weave
@@ -154,9 +134,9 @@ spec:
         resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "same"}})
         resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "same"}})
 ---
-# A typo must not quietly become None. That would render a resource with a blank
-# field which applies cleanly, and is a far worse failure than a backtrace - the
-# error names the field and lists the ones that do exist.
+# A field that is not set reads as None, but reaching through one does not: a
+# path that assumed an object where there is nothing fails where it happened,
+# rather than producing a resource with a blank field.
 apiVersion: weft.run/v1alpha1
 kind: Weave
 metadata:
@@ -166,6 +146,7 @@ spec:
   serviceAccountName: composer
   program: |
     def compose(variable):
+        platform = read("v1", "ConfigMap", "platform")
         resource({
             "apiVersion": "v1",
             "kind": "ConfigMap",
