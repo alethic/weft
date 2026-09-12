@@ -60,60 +60,109 @@ func TestBuildAssignsWavesByPosition(t *testing.T) {
 	}
 }
 
-func TestBuildHonoursWaveAnnotation(t *testing.T) {
-	withWave := func(w string) func(map[string]any) {
-		return func(obj map[string]any) {
-			md := obj["metadata"].(map[string]any)
-			md["annotations"] = map[string]any{naming.WaveAnnotation: w}
-		}
-	}
+// Depth in the dependency graph is the wave. Siblings that need the same thing
+// and not each other come out together without anybody deciding that.
+func TestBuildDerivesWavesFromNeeds(t *testing.T) {
 	items, err := Build([]eval.Resource{
-		{Key: "ra-a", Object: res("ra-a", withWave("1"))},
-		{Key: "identity", Object: res("identity", withWave("0"))},
-		{Key: "ra-b", Object: res("ra-b", withWave("1"))},
+		{Key: "identity", Object: res("identity")},
+		{Key: "ra-a", Object: needs(res("ra-a"), "identity")},
+		{Key: "ra-b", Object: needs(res("ra-b"), "identity")},
+		{Key: "ra-c", Object: needs(res("ra-c"), "identity")},
 	}, "ns", owner())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	waves := ApplyWaves(items)
-	if len(waves) != 2 {
-		t.Fatalf("got %d waves, want 2", len(waves))
+	want := map[string]int32{"identity": 0, "ra-a": 1, "ra-b": 1, "ra-c": 1}
+	for _, it := range items {
+		if it.Wave != want[it.Key] {
+			t.Errorf("%s is wave %d, want %d", it.Key, it.Wave, want[it.Key])
+		}
 	}
-	if len(waves[0]) != 1 || waves[0][0].Key != "identity" {
-		t.Errorf("first wave = %v", waves[0])
+
+	groups := Waves(entriesOf(items))
+	if len(groups) != 2 {
+		t.Fatalf("got %d waves, want 2", len(groups))
 	}
-	// The fan-out siblings share a wave, so they tear down together rather than
-	// one round trip at a time.
-	if len(waves[1]) != 2 {
-		t.Errorf("second wave has %d items, want 2", len(waves[1]))
+	if len(groups[0]) != 3 {
+		t.Errorf("the fan-out has %d items in its wave, want 3 torn down together", len(groups[0]))
 	}
 }
 
-func TestBuildRejectsMixedWaves(t *testing.T) {
+// Declaring a dependency frees a resource from the positional chain, which is
+// the whole point: it says this one is less constrained than its position.
+func TestNeedsOverridesThePositionalChain(t *testing.T) {
+	items, err := Build([]eval.Resource{
+		{Key: "base", Object: res("base")},
+		{Key: "long", Object: res("long")},
+		{Key: "winded", Object: res("winded")},
+		{Key: "quick", Object: needs(res("quick"), "base")},
+	}, "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byKey := map[string]int32{}
+	for _, it := range items {
+		byKey[it.Key] = it.Wave
+	}
+	if byKey["winded"] != 2 {
+		t.Errorf("the chain should still apply to what says nothing: %d", byKey["winded"])
+	}
+	if byKey["quick"] != 1 {
+		t.Errorf("quick needs only base, so it belongs at depth 1, got %d", byKey["quick"])
+	}
+}
+
+// A dependency naming a key the program did not return is a typo, and catching
+// it is the thing a wave number could never do.
+func TestBuildRejectsAnUnknownDependency(t *testing.T) {
 	_, err := Build([]eval.Resource{
-		{Key: "a", Object: res("a", func(obj map[string]any) {
-			obj["metadata"].(map[string]any)["annotations"] = map[string]any{naming.WaveAnnotation: "0"}
-		})},
-		{Key: "b", Object: res("b")},
+		{Key: "a", Object: res("a")},
+		{Key: "b", Object: needs(res("b"), "idenity")},
 	}, "ns", owner())
 
-	if err == nil || !strings.Contains(err.Error(), "all of them or none") {
+	if err == nil || !strings.Contains(err.Error(), "idenity") {
+		t.Fatalf("err = %v, should name the key that matches nothing", err)
+	}
+}
+
+// A cycle is reported rather than broken. Breaking one silently produces an
+// apply order that looks fine and is not.
+func TestBuildRejectsADependencyCycle(t *testing.T) {
+	_, err := Build([]eval.Resource{
+		{Key: "a", Object: needs(res("a"), "c")},
+		{Key: "b", Object: needs(res("b"), "a")},
+		{Key: "c", Object: needs(res("c"), "b")},
+	}, "ns", owner())
+
+	if err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("err = %v", err)
 	}
 }
 
-func TestBuildRejectsBadWaveValue(t *testing.T) {
-	for _, bad := range []string{"-1", "soon", ""} {
-		_, err := Build([]eval.Resource{
-			{Key: "a", Object: res("a", func(obj map[string]any) {
-				obj["metadata"].(map[string]any)["annotations"] = map[string]any{naming.WaveAnnotation: bad}
-			})},
-		}, "ns", owner())
-		if err == nil {
-			t.Errorf("wave %q should have been rejected", bad)
-		}
+func TestBuildRejectsSelfDependency(t *testing.T) {
+	_, err := Build([]eval.Resource{
+		{Key: "a", Object: needs(res("a"), "a")},
+	}, "ns", owner())
+
+	if err == nil || !strings.Contains(err.Error(), "itself") {
+		t.Fatalf("err = %v", err)
 	}
+}
+
+func needs(obj map[string]any, deps string) map[string]any {
+	md := obj["metadata"].(map[string]any)
+	md["annotations"] = map[string]any{naming.NeedsAnnotation: deps}
+	return obj
+}
+
+func entriesOf(items []Item) []v1alpha1.InventoryEntry {
+	out := make([]v1alpha1.InventoryEntry, 0, len(items))
+	for _, it := range items {
+		out = append(out, Entry(it, nil))
+	}
+	return out
 }
 
 func TestBuildOwnsAndLabels(t *testing.T) {

@@ -59,14 +59,11 @@ spec:
         # ConfigMap, so it may not be there yet.
         cluster = get(platform, 'metadata.annotations["platform.example/cluster"]', "unregistered")
 
-        # ---- wave 0: the identity everything else hangs off -----------------
+        # ---- the identity everything else hangs off -------------------------
         out["serviceaccount"] = {
             "apiVersion": "v1",
             "kind": "ServiceAccount",
-            "metadata": {
-                "name": variable.name,
-                "annotations": {"weft.run/wave": "0"},
-            },
+            "metadata": {"name": variable.name},
         }
 
         # The API server assigns the uid after the apply returns. Until it
@@ -78,7 +75,11 @@ spec:
             pending("the ServiceAccount has not been assigned a uid")
             return out
 
-        # ---- wave 1: everything derived from that identity ------------------
+        # ---- everything derived from that identity --------------------------
+        #
+        # Each says what it needs rather than which step it belongs to, and the
+        # depth falls out: these all need the ServiceAccount and nothing needs
+        # them, so they land together and are torn down in one go.
 
         # Serialising a structure into a string field is the single most common
         # thing these compositions do, so it is a builtin. Mapping order is the
@@ -103,7 +104,7 @@ spec:
             "kind": "ConfigMap",
             "metadata": {
                 "name": variable.name + "-values",
-                "annotations": {"weft.run/wave": "1"},
+                "annotations": {"weft.run/needs": "serviceaccount"},
             },
             "data": {
                 "values.yaml": to_yaml(settings),
@@ -120,7 +121,7 @@ spec:
             "kind": "Secret",
             "metadata": {
                 "name": variable.name + "-derived",
-                "annotations": {"weft.run/wave": "1"},
+                "annotations": {"weft.run/needs": "serviceaccount"},
             },
             "type": "Opaque",
             "data": {
@@ -138,7 +139,7 @@ spec:
                 "kind": "ConfigMap",
                 "metadata": {
                     "name": variable.name + "-" + env.name,
-                    "annotations": {"weft.run/wave": "1"},
+                    "annotations": {"weft.run/needs": "serviceaccount"},
                     "labels": {"environment": env.name},
                 },
                 "data": {
@@ -148,7 +149,7 @@ spec:
                 },
             }
 
-        # ---- wave 2: the workload, once what it mounts exists ---------------
+        # ---- the workload, once what it mounts exists -----------------------
         secret_uid = get(observed, ["secret", "metadata", "uid"])
         if not secret_uid:
             pending("the derived Secret has not been created")
@@ -159,7 +160,7 @@ spec:
             "kind": "Deployment",
             "metadata": {
                 "name": variable.name,
-                "annotations": {"weft.run/wave": "2"},
+                "annotations": {"weft.run/needs": "values,secret"},
             },
             "spec": {
                 "replicas": variable.replicas,
@@ -200,7 +201,7 @@ spec:
             "kind": "Service",
             "metadata": {
                 "name": variable.name,
-                "annotations": {"weft.run/wave": "2"},
+                "annotations": {"weft.run/needs": "values,secret"},
             },
             "spec": {
                 "selector": {"app": variable.name},

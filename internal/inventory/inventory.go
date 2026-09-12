@@ -12,7 +12,7 @@ package inventory
 import (
 	"fmt"
 	"sort"
-	"strconv"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,13 +49,26 @@ func (i Item) GroupVersionKind() schema.GroupVersionKind { return i.Object.Group
 // Build normalises an evaluated resource set and assigns apply order.
 //
 // Order defaults to the position in the returned mapping, which is the order
-// the program wrote and, for a program that creates a thing before the things
-// that consume it, already the dependency order. A resource can override it
-// with the wave annotation, which is how a fan-out of independent siblings gets
-// torn down in one step instead of one at a time.
+// the program wrote. For a program that creates a thing before the things that
+// consume it - which is what the control flow of a composition already
+// enforces - that is the dependency order, and nothing has to be annotated for
+// teardown to be correct.
+//
+// What the needs annotation buys is parallelism, not correctness. Teardown
+// waits for a wave to be confirmed gone before starting the next, so a
+// composition with no annotations is torn down one object at a time. Siblings
+// that depend on something in common but not on each other - seven role
+// assignments under one identity - say so, and go together. For a managed
+// resource that takes minutes to delete that is the difference between one wait
+// and seven.
+//
+// The wave is derived, never written: it is the depth of a resource in the
+// dependency graph. Resources that need the same things and not each other come
+// out at the same depth without anybody deciding that they should.
 func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Item, error) {
 	items := make([]Item, 0, len(resources))
-	explicit := 0
+	needs := make(map[string][]string, len(resources))
+	index := make(map[string]int, len(resources))
 
 	for i, r := range resources {
 		owned, err := ownedFrom(r.Object, r.Key)
@@ -67,29 +80,136 @@ func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Ite
 		if err != nil {
 			return nil, fmt.Errorf("resource %q %w", r.Key, err)
 		}
-		wave := int32(i)
-		if s, ok := u.GetAnnotations()[naming.WaveAnnotation]; ok {
-			n, err := strconv.ParseInt(s, 10, 32)
-			if err != nil || n < 0 {
-				return nil, fmt.Errorf("resource %q has %s=%q, which is not a non-negative integer",
-					r.Key, naming.WaveAnnotation, s)
-			}
-			wave = int32(n)
-			explicit++
+
+		deps, declared, err := needsFrom(u.GetAnnotations(), r.Key)
+		if err != nil {
+			return nil, err
 		}
-		items = append(items, Item{Key: r.Key, Object: u, Wave: wave, Owned: owned})
+		if !declared && i > 0 {
+			// Undeclared means "after whatever came before me", which is what
+			// the program already said by returning it in that order. Only a
+			// resource that names its dependencies is freed from the chain.
+			deps = []string{resources[i-1].Key}
+		}
+
+		needs[r.Key] = deps
+		index[r.Key] = i
+		items = append(items, Item{Key: r.Key, Object: u, Owned: owned})
 	}
 
-	// Mixing explicit waves with positional defaults produces an order nobody
-	// intended: an annotated resource at wave 1 would be torn down after an
-	// unannotated one that happens to sit at position 5.
-	if explicit > 0 && explicit != len(items) {
-		return nil, fmt.Errorf(
-			"%d of %d resources set %s: either annotate all of them or none, because mixing explicit waves with positional order produces an ordering nobody wrote",
-			explicit, len(items), naming.WaveAnnotation)
+	levels, err := depths(items, needs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range items {
+		items[i].Wave = levels[items[i].Key]
 	}
 
 	return items, nil
+}
+
+// needsFrom parses the needs annotation. The second result distinguishes "named
+// nothing" from "did not say", which are different: an explicit empty value is
+// a resource declaring it depends on nothing at all.
+func needsFrom(annotations map[string]string, key string) ([]string, bool, error) {
+	raw, ok := annotations[naming.NeedsAnnotation]
+	if !ok {
+		return nil, false, nil
+	}
+
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		dep := strings.TrimSpace(part)
+		if dep == "" {
+			continue
+		}
+		if dep == key {
+			return nil, false, fmt.Errorf("resource %q sets %s to itself", key, naming.NeedsAnnotation)
+		}
+		out = append(out, dep)
+	}
+	return out, true, nil
+}
+
+// depths assigns each resource the length of the longest dependency chain
+// reaching it, which is its wave.
+//
+// A cycle is reported rather than broken. Breaking one silently would produce an
+// apply order that looks fine and is not, and the program said something
+// impossible: the author has to decide which edge is wrong.
+func depths(items []Item, needs map[string][]string) (map[string]int32, error) {
+	known := make(map[string]bool, len(items))
+	for _, it := range items {
+		known[it.Key] = true
+	}
+	for _, it := range items {
+		for _, dep := range needs[it.Key] {
+			if !known[dep] {
+				return nil, fmt.Errorf(
+					"resource %q needs %q, which this program does not return. %s names the keys of "+
+						"other resources in the same result, so this is either a typo or a resource that "+
+						"is only returned on some passes",
+					it.Key, dep, naming.NeedsAnnotation)
+			}
+		}
+	}
+
+	const (
+		unvisited = 0
+		onStack   = 1
+		done      = 2
+	)
+	state := make(map[string]int, len(items))
+	level := make(map[string]int32, len(items))
+
+	var visit func(key string, path []string) error
+	visit = func(key string, path []string) error {
+		switch state[key] {
+		case done:
+			return nil
+		case onStack:
+			return fmt.Errorf("resources %s form a dependency cycle through %s, so there is no order "+
+				"in which they can be applied", describeCycle(append(path, key)), naming.NeedsAnnotation)
+		}
+
+		state[key] = onStack
+		var deepest int32
+		for _, dep := range needs[key] {
+			if err := visit(dep, append(path, key)); err != nil {
+				return err
+			}
+			if level[dep]+1 > deepest {
+				deepest = level[dep] + 1
+			}
+		}
+		state[key] = done
+		level[key] = deepest
+		return nil
+	}
+
+	for _, it := range items {
+		if err := visit(it.Key, nil); err != nil {
+			return nil, err
+		}
+	}
+	return level, nil
+}
+
+// describeCycle renders the loop starting from where it closes.
+func describeCycle(path []string) string {
+	closing := path[len(path)-1]
+	from := 0
+	for i, k := range path {
+		if k == closing {
+			from = i
+			break
+		}
+	}
+	quoted := make([]string, 0, len(path)-from)
+	for _, k := range path[from:] {
+		quoted = append(quoted, fmt.Sprintf("%q", k))
+	}
+	return strings.Join(quoted, " -> ")
 }
 
 // ownedFrom reads the ownership annotation off a returned resource.

@@ -38,8 +38,9 @@ spec:
                 "kind": "ConfigMap",
                 "metadata": {
                     "name": "region-" + region,
-                    # One wave, because none of these depends on another.
-                    "annotations": {"weft.run/wave": "0"},
+                    # None of these depends on another, so saying they need
+                    # nothing puts them at one depth instead of in a chain.
+                    "annotations": {"weft.run/needs": ""},
                 },
                 "data": {"region": region},
             }

@@ -379,6 +379,56 @@ A name match is not enough for that, and deliberately so: a `Weave` deleted and
 recreated under the same name is a different object, and the label is something
 anyone who can write the object can set.
 
+### `weft.run/needs`
+
+Names the keys a resource depends on, comma-separated:
+
+```python
+"metadata": {
+    "name": "app-db",
+    "annotations": {"weft.run/needs": "sqlserver,sqlcmd-script"},
+}
+```
+
+**Nothing needs annotating for the order to be right.** A resource that says
+nothing depends on the one returned before it, which is what the control flow of
+a composition already means — an `if` that creates a thing before the things
+consuming it has expressed the order. Apply order is that order; teardown is its
+reverse.
+
+What the annotation buys is parallelism. Teardown waits for a wave to be
+confirmed gone before starting the next, so a composition that says nothing is
+torn down one object at a time, and a managed resource takes minutes to delete.
+Siblings that depend on something in common but not on each other say so and go
+together:
+
+```python
+for role in variable.roles:
+    out["ra-" + role.name] = {
+        ...,
+        "annotations": {"weft.run/needs": "identity"},
+    }
+```
+
+Seven role assignments naming one identity come out at the same depth — one wait
+instead of seven. The empty value, `"weft.run/needs": ""`, means "nothing",
+which is how a set of siblings built in a loop escapes being chained to each
+other.
+
+Waves are derived, never written: a resource's wave is its depth in the
+dependency graph, `1 + max(depth of what it needs)`. `status.inventory` records
+the result.
+
+Because dependencies are keys rather than numbers, they are checkable. A name
+matching no returned key is an error, not a silently wrong order:
+
+```
+resource "assignment" needs "idenity", which this program does not return
+```
+
+A cycle is reported rather than broken — the program has said something
+impossible, and which edge is wrong is not the controller's to guess.
+
 ### `weft.run/owned: "false"`
 
 An unowned resource is applied and kept current like any other, but no owner
@@ -458,9 +508,10 @@ def compose(variable, observed):
             "kind": "RoleAssignment",
             "metadata": {
                 "name": variable.prefix + "-" + role.name,
-                # Siblings share a wave so they tear down in one step rather
-                # than one round trip at a time.
-                "annotations": {"weft.run/wave": "1"},
+                # Each names the identity it grants a role to. None of them
+                # needs another, so they come out at one depth and tear down
+                # in a single step rather than one round trip at a time.
+                "annotations": {"weft.run/needs": "identity"},
             },
             "spec": {
                 "providerConfigRef": variable.providerConfigRef,
@@ -472,7 +523,5 @@ def compose(variable, observed):
             },
         }
 
-    # Every resource is annotated once any is, so the identity gets wave 0.
-    out["identity"]["metadata"]["annotations"]["weft.run/wave"] = "0"
     return out
 ```

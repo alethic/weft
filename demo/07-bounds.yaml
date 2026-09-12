@@ -127,28 +127,49 @@ spec:
             },
         }
 ---
-# Mixing explicit waves with positional ones produces an ordering nobody wrote:
-# the annotated resource would tear down after an unannotated one that happens
-# to sit later in the mapping.
+# A dependency naming a key the program does not return is a typo, and the whole
+# reason ordering is expressed as names rather than numbers: a wave number could
+# be wrong in a way nothing could ever detect.
 apiVersion: weft.run/v1alpha1
 kind: Weave
 metadata:
-  name: bound-mixed-waves
+  name: bound-unknown-need
   namespace: weft-demo
 spec:
   serviceAccountName: composer
   program: |
     def compose(variable, observed):
         return {
-            "annotated": {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {"name": "a", "annotations": {"weft.run/wave": "0"}},
+            "identity": {
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "a"},
             },
-            "positional": {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {"name": "b"},
+            "assignment": {
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "b", "annotations": {"weft.run/needs": "idenity"}},
+            },
+        }
+---
+# A cycle is reported rather than broken. Breaking one silently would produce an
+# apply order that looks fine and is not, and the program has said something
+# impossible - which edge is wrong is not ours to guess.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-cycle
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    def compose(variable, observed):
+        return {
+            "a": {
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "a", "annotations": {"weft.run/needs": "b"}},
+            },
+            "b": {
+                "apiVersion": "v1", "kind": "ConfigMap",
+                "metadata": {"name": "b", "annotations": {"weft.run/needs": "a"}},
             },
         }
 ---

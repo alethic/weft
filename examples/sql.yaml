@@ -40,14 +40,13 @@ spec:
         rg_id = require(resourceGroup, "status.atProvider.id")
         admin_name = variable.resourceName + "-sqladmin"
 
-        # Wave 0: the identity the SQL server runs its AAD admin as.
+        # The identity the SQL server runs its AAD admin as. Nothing before it.
         out["sqladmin-identity"] = {
             "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
             "kind": "UserAssignedIdentity",
             "metadata": {
                 "name": variable.prefix + "-sqladmin",
                 "annotations": {
-                    "weft.run/wave": "0",
                     "crossplane.io/external-name":
                         rg_id + "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/" + admin_name,
                 },
@@ -68,14 +67,15 @@ spec:
             pending("clientId and principalId on the SQL admin identity")
             return out
 
-        # Wave 1: the workload-identity ServiceAccount, and the server itself.
+        # The workload-identity ServiceAccount, and the server itself. Both
+        # need the identity and neither needs the other, so they go together.
         out["sqladmin-serviceaccount"] = {
             "apiVersion": "v1",
             "kind": "ServiceAccount",
             "metadata": {
                 "name": variable.prefix + "-sqladmin",
                 "annotations": {
-                    "weft.run/wave": "1",
+                    "weft.run/needs": "sqladmin-identity",
                     "azure.workload.identity/client-id": admin_client_id,
                 },
             },
@@ -86,7 +86,7 @@ spec:
             "kind": "MSSQLServer",
             "metadata": {
                 "name": variable.prefix,
-                "annotations": {"weft.run/wave": "1"},
+                "annotations": {"weft.run/needs": "sqladmin-identity"},
             },
             "spec": {
                 "providerConfigRef": variable.providerConfigRef,
@@ -103,7 +103,7 @@ spec:
             },
         }
 
-        # Wave 2: grant each application identity a database user.
+        # Grant each application identity a database user.
         fqdn = get(observed, ["sqlserver", "status", "atProvider", "fullyQualifiedDomainName"])
         if not fqdn:
             pending("fullyQualifiedDomainName on the SQL server")
@@ -128,7 +128,9 @@ spec:
                 "kind": "Job",
                 "metadata": {
                     "name": variable.prefix + "-sqlcmd-" + user.name + "-" + str(generation),
-                    "annotations": {"weft.run/wave": "2"},
+                    "annotations": {
+                        "weft.run/needs": "sqlserver,sqlcmd-script-" + user.name,
+                    },
                 },
                 "spec": {
                     "backoffLimit": 4,
@@ -155,14 +157,16 @@ spec:
                 },
             }
 
-            # The script lives in its own ConfigMap in an earlier wave, so it
-            # exists before the Job that mounts it and outlives it on teardown.
+            # The script lives in its own ConfigMap that the Job declares a
+            # need for, so it exists before the Job mounts it and outlives it
+            # on teardown. Saying which ConfigMap is the point: a number could
+            # have been wrong in a way nothing would notice.
             out["sqlcmd-script-" + user.name] = {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {
                     "name": variable.prefix + "-sqlcmd-" + user.name,
-                    "annotations": {"weft.run/wave": "1"},
+                    "annotations": {"weft.run/needs": "sqladmin-identity"},
                 },
                 "data": {"grant.sql": script},
             }

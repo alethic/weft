@@ -207,14 +207,15 @@ kubectl -n weft-demo get weave -o custom-columns=\
 bound-budget           ProgramBudgetExceeded
 bound-cluster-scoped   ClusterScoped
 bound-load             ProgramLoadNotAllowed
-bound-mixed-waves      ProgramInvalidOutput
+bound-cycle            ProgramInvalidOutput
+bound-unknown-need     ProgramInvalidOutput
 bound-namespace        ProgramInvalidOutput
 bound-owner            ProgramInvalidOutput
 bound-recursion        ProgramFailed
 bound-typo             ProgramFailed
 ```
 
-Eight ways to be wrong, eight distinguishable reasons, and a controller that is
+Nine ways to be wrong, nine distinguishable reasons, and a controller that is
 still running. `bound-typo` is worth reading — a mistyped field names itself and
 lists the ones that exist, rather than quietly becoming `None` and rendering a
 resource with a blank field:

@@ -74,7 +74,10 @@ spec:
             "metadata": {
                 "name": variable.prefix + "-" + suffix,
                 "annotations": {
-                    "weft.run/wave": "0",
+                    # Nothing. The identities are built in a loop and have no
+                    # dependency on each other, so saying so puts them all at
+                    # the same depth instead of in a chain.
+                    "weft.run/needs": "",
                     # The provider needs the fully qualified id to adopt rather
                     # than recreate, and it can only be built once the resource
                     # group has reported its own id.
@@ -140,10 +143,11 @@ spec:
                 "kind": "RoleAssignment",
                 "metadata": {
                     "name": variable.prefix + "-" + role.name,
-                    # One wave for the whole fan-out. These have no dependency
-                    # on each other, so teardown removes them in a single step
-                    # instead of one round trip at a time.
-                    "annotations": {"weft.run/wave": "1"},
+                    # Each names the identity it grants a role to. They have
+                    # no dependency on each other, so they come out at the same
+                    # depth and teardown removes them in a single step instead
+                    # of one round trip at a time.
+                    "annotations": {"weft.run/needs": "identity-" + role.principal},
                 },
                 "spec": {
                     "providerConfigRef": variable.providerConfigRef,

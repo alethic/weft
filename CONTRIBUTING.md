@@ -95,7 +95,7 @@ most valuable suites is worse than a red one.
 | layer | needs | covers |
 |---|---|---|
 | `internal/eval` | nothing | language semantics, waiting, bounds, ergonomics |
-| `internal/inventory` | nothing | wave planning, hysteresis, normalisation, ownership |
+| `internal/inventory` | nothing | dependency ordering, hysteresis, normalisation, ownership |
 | `internal/kube` | nothing | RBAC diagnostics |
 | `internal/examples` | nothing | every shipped example parses, evaluates and normalises |
 | `cmd/weft` | helm | the chart renders, and its arguments parse with the real flag set |

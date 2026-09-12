@@ -215,16 +215,22 @@ and creates another.
 
 Return order becomes apply order, and therefore reverse teardown order.
 Cascading garbage collection would remove everything a `Weave` owns but in no
-particular order, which is wrong for anything with a dependency.
+particular order, which is wrong for anything with a dependency. The `if`
+statements in a composition already put a thing before the things that consume
+it, so the default is correct with nothing annotated.
 
-For explicit control, annotate:
+What the default costs is parallelism: teardown waits for each object to be
+confirmed gone before the next, and a managed resource takes minutes to delete.
+Siblings that depend on something in common but not on each other can say so:
 
 ```python
-"metadata": {"annotations": {"weft.run/wave": "1"}}
+"metadata": {"annotations": {"weft.run/needs": "identity"}}
 ```
 
-Either annotate every resource or none; mixing explicit waves with positional
-defaults produces an order nobody wrote, and is rejected.
+Seven role assignments that all name the same identity come out at the same
+depth and are deleted together — one wait instead of seven. Ordering is derived
+from what you name, never written as a number, so a dependency on a key the
+program does not return is an error rather than a silently wrong order.
 
 ### Waiting on a resource nothing reads
 

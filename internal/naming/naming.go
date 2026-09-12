@@ -97,9 +97,24 @@ var (
 	// This is the stable identity returned by compose(), not the object name.
 	KeyAnnotation = Group + "/key"
 
-	// WaveAnnotation optionally overrides a resource's teardown wave. Lower
-	// waves are applied first and deleted last.
-	WaveAnnotation = Group + "/wave"
+	// NeedsAnnotation names the keys a resource depends on, comma-separated.
+	//
+	// Ordering is derived from it rather than declared: a resource is applied
+	// after everything it needs and deleted before it, and resources that need
+	// the same things and not each other go together. A fan-out of role
+	// assignments under one identity says "needs: identity" and is torn down in
+	// one step, without anybody choosing a number.
+	//
+	// A resource that names nothing depends on the one returned before it,
+	// which is what the control flow of a composition already means: an if
+	// statement that creates a thing before the things consuming it has
+	// expressed the order. So the default is correct without annotation, and
+	// this is for saying that something is *less* constrained than that.
+	//
+	// The keys are the program's own, which is what makes a typo catchable. A
+	// wave number could be wrong in a way nothing could detect; a name that
+	// matches no key is an error.
+	NeedsAnnotation = Group + "/needs"
 
 	// OwnedAnnotation decides whether Weft owns a resource it applies. Its
 	// accepted values are "true" (the default) and "false".
