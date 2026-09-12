@@ -230,15 +230,19 @@ rg.status.atProvider.id
 storage.metadata.annotations["crossplane.io/external-name"]
 ```
 
-A missing field is an **error**, not `None`. A typo that silently produced
-`None` would render a resource with a blank field that applies cleanly, which is
-a far worse failure than a backtrace. Optional access is spelled explicitly.
+A field that is not set reads as `None`. Status is the case that matters: a
+provider writes it back when it gets to it, so a program reaching into
+`status.atProvider` before that is doing the ordinary thing rather than making a
+mistake.
+
+Reaching *through* a `None` fails the way it does anywhere else, so a chain only
+works as far as the objects in it exist. `get()` is for when it might not.
 
 ### `get(obj, path, default=None)`
 
 ```python
 get(rg, "status.atProvider.id", "")
-get(observed, ["identity", "status", "atProvider", "principalId"])
+get(identity.observed, "status.atProvider.principalId")
 get(storage, 'metadata.annotations["crossplane.io/external-name"]')
 ```
 

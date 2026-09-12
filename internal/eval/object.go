@@ -120,10 +120,10 @@ func init() {
 
 // Attr implements starlark.HasAttrs.
 //
-// A missing field is an error rather than None. Silently yielding None turns a
-// typo into a resource that renders with a blank field and applies cleanly,
-// which is a far worse failure than a stack trace. Optional access is spelled
-// explicitly, with get().
+// A missing field is None. These are ordinary objects and a field that is not
+// set reads as nothing, which is what a program navigating into status has to
+// deal with constantly: a provider writes it back when it gets to it, and until
+// then it is simply not there.
 func (o *Object) Attr(name string) (starlark.Value, error) {
 	if v, ok := o.m[name]; ok {
 		return v, nil
@@ -131,7 +131,7 @@ func (o *Object) Attr(name string) (starlark.Value, error) {
 	if m, ok := objectMethods[name]; ok {
 		return m.BindReceiver(o), nil
 	}
-	return nil, fmt.Errorf("object has no field %q%s", name, o.didYouMean(name))
+	return starlark.None, nil
 }
 
 // AttrNames implements starlark.HasAttrs.
@@ -143,22 +143,6 @@ func (o *Object) AttrNames() []string {
 	}
 	sort.Strings(names)
 	return names
-}
-
-// didYouMean renders the available fields, bounded so a large resource body
-// does not produce an unreadable error.
-func (o *Object) didYouMean(name string) string {
-	if len(o.keys) == 0 {
-		return " (object is empty)"
-	}
-	const max = 12
-	shown := o.keys
-	suffix := ""
-	if len(shown) > max {
-		shown = shown[:max]
-		suffix = ", ..."
-	}
-	return fmt.Sprintf(" (has: %s%s)", strings.Join(shown, ", "), suffix)
 }
 
 // receiverObject recovers the object a bound method was called on. The

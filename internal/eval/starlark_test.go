@@ -570,22 +570,28 @@ func TestSyntaxError(t *testing.T) {
 	}
 }
 
-// A typo in a field name must not quietly become None: that produces a resource
-// with a blank field which applies cleanly, and is far worse than an error.
-func TestMissingFieldIsAnErrorNotNone(t *testing.T) {
-	_, err := run(t, `
+// A field that is not set reads as None. Status is the case that matters: a
+// provider writes it back when it gets to it, and a program navigating into it
+// meanwhile is doing the ordinary thing, not making a mistake.
+func TestMissingFieldIsNone(t *testing.T) {
+	res := mustRun(t, `
 def compose(variable):
-    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": read("v1", "Thing", "rg").staus}})
+    rg = read("v1", "Thing", "rg")
+    resource({
+        "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "report"},
+        "data": {"set": str(rg.status.atProvider.id != None)},
+    })
 `, Request{Reader: fakeReader{
-		"rg": map[string]any{"apiVersion": "v1", "kind": "ResourceGroup", "metadata": map[string]any{"name": "rg"}},
+		"rg": map[string]any{
+			"apiVersion": "v1", "kind": "ResourceGroup",
+			"metadata": map[string]any{"name": "rg"},
+			"status":   map[string]any{"atProvider": map[string]any{}},
+		},
 	}})
 
-	pe := programError(t, err)
-	if !strings.Contains(pe.Msg, "staus") {
-		t.Errorf("msg = %q, should name the missing field", pe.Msg)
-	}
-	if !strings.Contains(pe.Msg, "apiVersion") {
-		t.Errorf("msg = %q, should list the fields that do exist", pe.Msg)
+	data := res.Resources[0].Object["data"].(map[string]any)
+	if data["set"] != "False" {
+		t.Errorf("set = %v, want a missing field to read as None", data["set"])
 	}
 }
 
