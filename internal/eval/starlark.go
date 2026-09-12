@@ -138,10 +138,10 @@ func NewStarlark(opts Options) *Starlark {
 	}
 }
 
-// keyPattern bounds inventory keys. They are written into an annotation value
-// and into status, and they are the stable identity of a live object, so they
-// are restricted rather than arbitrary.
-var keyPattern = regexp.MustCompile(`^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`)
+// namePattern bounds the object names a program may produce. The API server
+// enforces its own rules per resource type; this catches the obviously wrong
+// early, where the message can say which resource was at fault.
+var namePattern = regexp.MustCompile(`^[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`)
 
 // Evaluate compiles (or reuses) the program and calls compose().
 func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
@@ -175,7 +175,7 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 
 	// The read session lives on the thread for the same reason wait and pending
 	// do: threads are per-evaluation, so nothing here is shared state.
-	declared := newDeclaredSet()
+	declared := newDeclaredSet(req.Observed)
 	thread.SetLocal(resourcesLocalKey, declared)
 
 	thread.SetLocal(readerLocalKey, &readSession{
@@ -190,11 +190,6 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 	if err != nil {
 		return nil, programErrorf(ReasonInvalidArgument, "converting variables: %v", err)
 	}
-	observedV, err := objectToStarlark(req.Observed)
-	if err != nil {
-		return nil, programErrorf(ReasonInvalidArgument, "converting observed: %v", err)
-	}
-
 	globals, err := prog.Init(thread, builtins())
 	if err != nil {
 		return s.classify(ctx, thread, err)
@@ -204,7 +199,7 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 	composeFn, ok := globals["compose"]
 	if !ok {
 		return nil, programErrorf(ReasonNoComposeFunc,
-			"program does not define compose(variable, observed)")
+			"program does not define compose(variable)")
 	}
 	callable, isCallable := composeFn.(starlark.Callable)
 	if !isCallable {
@@ -213,7 +208,7 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 	}
 
 	ret, err := starlark.Call(thread, callable,
-		starlark.Tuple{variablesV, observedV}, nil)
+		starlark.Tuple{variablesV}, nil)
 	if err != nil {
 		return s.classify(ctx, thread, err)
 	}
@@ -291,24 +286,25 @@ func (s *Starlark) decode(ret starlark.Value, set *declaredSet) (*Result, error)
 	b := &budget{maxNodes: s.opts.MaxValues}
 	out := make([]Resource, 0, len(set.order))
 	for _, rv := range set.order {
-		if !keyPattern.MatchString(rv.key) || len(rv.key) > 253 {
+		if !namePattern.MatchString(rv.ref.Name) || len(rv.ref.Name) > 253 {
 			return nil, programErrorf(ReasonInvalidOutput,
-				"resource key %q is not usable as an identity: keys must be alphanumeric with -, _ or . inside, at most 253 characters", rv.key)
+				"%s: metadata.name is not usable: names must be alphanumeric with -, _ or . inside, at most 253 characters",
+				rv.ref)
 		}
 
 		obj, err := asStringMap(rv.body, b)
 		if err != nil {
 			if strings.Contains(err.Error(), "exceeds") {
-				return nil, programErrorf(ReasonOutputTooLarge, "resource %q: %v", rv.key, err)
+				return nil, programErrorf(ReasonOutputTooLarge, "%s: %v", rv.ref, err)
 			}
-			return nil, programErrorf(ReasonInvalidOutput, "resource %q: %v", rv.key, err)
+			return nil, programErrorf(ReasonInvalidOutput, "%s: %v", rv.ref, err)
 		}
 		if err := checkShape(obj); err != nil {
-			return nil, programErrorf(ReasonInvalidOutput, "resource %q: %v", rv.key, err)
+			return nil, programErrorf(ReasonInvalidOutput, "%s: %v", rv.ref, err)
 		}
 		out = append(out, Resource{
-			Key: rv.key, Object: obj,
-			Needs: needKeys(rv), NeedsDeclared: rv.declared,
+			Ref: rv.ref, Object: obj,
+			Needs: needRefs(rv), NeedsDeclared: rv.declared,
 		})
 	}
 	return &Result{Resources: out}, nil

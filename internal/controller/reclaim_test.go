@@ -14,8 +14,8 @@ import (
 func TestProvenanceIsStampedOnEverything(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("stamper", `
-def compose(variable, observed):
-    resource("thing", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "thing"},
         })
@@ -31,9 +31,6 @@ def compose(variable, observed):
 	if got := cm.Labels[naming.WeaveLabel]; got != "stamper" {
 		t.Errorf("%s = %q", naming.WeaveLabel, got)
 	}
-	if got := cm.Annotations[naming.KeyAnnotation]; got != "thing" {
-		t.Errorf("%s = %q", naming.KeyAnnotation, got)
-	}
 	if got := cm.Annotations[naming.WeaveUIDAnnotation]; got != string(w.UID) {
 		t.Errorf("%s = %q, want the Weave's UID %q", naming.WeaveUIDAnnotation, got, w.UID)
 	}
@@ -45,8 +42,8 @@ def compose(variable, observed):
 func TestUnownedResourceIsReclaimedAfterStatusLoss(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("forgetful", `
-def compose(variable, observed):
-    resource("keeper", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "keeper", "annotations": {"weft.run/owned": "false"}},
         "data": {"v": "1"},
@@ -73,7 +70,7 @@ def compose(variable, observed):
 	h.settle("forgetful", 2)
 
 	requireCondition(t, h.weave("forgetful"), naming.ConditionReady, metav1.ConditionTrue)
-	if _, ok := h.weave("forgetful").Status.InventoryByKey("keeper"); !ok {
+	if _, ok := h.weave("forgetful").Status.InventoryFor("v1", "ConfigMap", "keeper"); !ok {
 		t.Error("the resource should be back in the inventory")
 	}
 	if !h.recordedEvent("Reclaimed", "keeper") {
@@ -86,8 +83,8 @@ def compose(variable, observed):
 func TestOwnedResourceIsReclaimedAfterItsReferenceIsStripped(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("stripped", `
-def compose(variable, observed):
-    resource("thing", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing"}})
 `, "")
 	h.settle("stripped", 2)
 
@@ -129,7 +126,7 @@ func TestProvenanceFromAnotherWeaveIsNotReclaimed(t *testing.T) {
 	cm := h.configMap("impostor", map[string]string{"owner": "somebody-else"})
 	cm.Labels = map[string]string{naming.WeaveLabel: "claimant"}
 	cm.Annotations = map[string]string{
-		naming.KeyAnnotation:      "thing",
+		naming.WeaveUIDAnnotation: "thing",
 		naming.WeaveUIDAnnotation: "11111111-1111-1111-1111-111111111111",
 	}
 	if err := testK8s.Update(h.ctx, cm); err != nil {
@@ -137,8 +134,8 @@ func TestProvenanceFromAnotherWeaveIsNotReclaimed(t *testing.T) {
 	}
 
 	h.create("claimant", `
-def compose(variable, observed):
-    resource("thing", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "impostor"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "impostor"}})
 `, "")
 	h.settle("claimant", 2)
 

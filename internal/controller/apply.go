@@ -65,14 +65,14 @@ func applyError(item inventory.Item, err error) error {
 
 	var perm *kube.PermissionError
 	if errors.As(err, &perm) {
-		return degradedf(ReasonForbidden, "applying %q:\n%s", item.Key, perm.Error())
+		return degradedf(ReasonForbidden, "applying %s:\n%s", item.Ref, perm.Error())
 	}
 
 	var unknown *kube.UnknownKindError
 	if errors.As(err, &unknown) {
 		return waitingf(ReasonKindNotInstalled,
 			"resource %q is a %s, and no such resource type is installed in this cluster",
-			item.Key, gvk)
+			item.Ref, gvk)
 	}
 
 	var scoped *kube.ClusterScopedError
@@ -80,14 +80,14 @@ func applyError(item inventory.Item, err error) error {
 		return degradedf(ReasonClusterScoped,
 			"resource %q is a %s, which is cluster-scoped: a namespaced Weave cannot own a cluster-scoped object, "+
 				"so it could never be garbage collected",
-			item.Key, gvk.Kind)
+			item.Ref, gvk.Kind)
 	}
 
 	if apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) {
-		return degradedf(ReasonApplyFailed, "resource %q was rejected by the API server: %v", item.Key, err)
+		return degradedf(ReasonApplyFailed, "%s was rejected by the API server: %v", item.Ref, err)
 	}
 
-	return fmt.Errorf("applying %q (%s %q): %w", item.Key, gvk.Kind, item.Object.GetName(), err)
+	return fmt.Errorf("applying %s: %w", item.Ref, err)
 }
 
 // deleteWaves deletes entries one wave at a time, highest wave first, and
@@ -145,9 +145,9 @@ func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, weave
 			}
 			var perm *kube.PermissionError
 			if errors.As(err, &perm) {
-				return nil, degradedf(ReasonForbidden, "tearing down %q:\n%s", e.Key, perm.Error())
+				return nil, degradedf(ReasonForbidden, "tearing down %s %q:\n%s", e.Kind, e.Name, perm.Error())
 			}
-			return nil, fmt.Errorf("reading %q before deleting it: %w", e.Key, err)
+			return nil, fmt.Errorf("reading %s %q before deleting it: %w", e.Kind, e.Name, err)
 		}
 
 		// Only delete what is still ours.
@@ -165,9 +165,9 @@ func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, weave
 		if err := c.Delete(ctx, gvk, e.Name, e.UID); err != nil {
 			var perm *kube.PermissionError
 			if errors.As(err, &perm) {
-				return nil, degradedf(ReasonForbidden, "deleting %q:\n%s", e.Key, perm.Error())
+				return nil, degradedf(ReasonForbidden, "deleting %s %q:\n%s", e.Kind, e.Name, perm.Error())
 			}
-			return nil, fmt.Errorf("deleting %q (%s %q): %w", e.Key, e.Kind, e.Name, err)
+			return nil, fmt.Errorf("deleting %s %q: %w", e.Kind, e.Name, err)
 		}
 		standing = append(standing, e)
 	}

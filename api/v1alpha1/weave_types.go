@@ -109,12 +109,9 @@ type WeaveSpec struct {
 
 // InventoryEntry records one resource this Weave created.
 type InventoryEntry struct {
-	// Key is the stable identity: the key compose() returned this resource
-	// under. Never positional, so reordering a list cannot rename a live
-	// object.
-	Key string `json:"key"`
-
-	// APIVersion, Kind and Name identify the live object. Its namespace is
+	// APIVersion, Kind and Name identify the live object, and are its whole
+	// identity. A composition describes objects, so there is nothing else for
+	// an entry to be about. Its namespace is
 	// always the Weave's own.
 	APIVersion string `json:"apiVersion"`
 	Kind       string `json:"kind"`
@@ -234,23 +231,8 @@ type WeaveStatus struct {
 	// order.
 	//
 	// +optional
-	// +listType=map
-	// +listMapKey=key
-	Inventory []InventoryEntry `json:"inventory,omitempty"`
-
-	// Superseded are objects this Weave created and no longer describes, which
-	// are waiting to be deleted.
-	//
-	// They arrive here when a program is edited to change the name or kind
-	// under a key it still returns. The new object is recorded in the inventory
-	// under that key, so the old one has nowhere left to be recorded and would
-	// otherwise be orphaned - present in the cluster, absent from every record,
-	// never cleaned up. This is an atomic list rather than a map because an
-	// entry here shares its key with the live object that replaced it.
-	//
-	// +optional
 	// +listType=atomic
-	Superseded []InventoryEntry `json:"superseded,omitempty"`
+	Inventory []InventoryEntry `json:"inventory,omitempty"`
 
 	// Reads records the kinds this composition read on its last successful
 	// pass. It is the watch set: a program that reads a ResourceGroup has to
@@ -297,11 +279,12 @@ type WeaveList struct {
 	Items           []Weave `json:"items"`
 }
 
-// InventoryByKey returns the inventory entry for a key.
-func (s *WeaveStatus) InventoryByKey(key string) (*InventoryEntry, bool) {
+// InventoryFor returns the inventory entry for an object.
+func (s *WeaveStatus) InventoryFor(apiVersion, kind, name string) (*InventoryEntry, bool) {
 	for i := range s.Inventory {
-		if s.Inventory[i].Key == key {
-			return &s.Inventory[i], true
+		e := &s.Inventory[i]
+		if e.APIVersion == apiVersion && e.Kind == kind && e.Name == name {
+			return e, true
 		}
 	}
 	return nil, false

@@ -55,8 +55,8 @@ func TestAdoptsOnAWildcard(t *testing.T) {
 	}
 
 	h.create("comer", `
-def compose(variable, observed):
-    resource("open-house", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "open-house"},
         "data": {"owner": "weft"},
@@ -91,8 +91,8 @@ func TestWildcardThatDoesNotMatchIsRefused(t *testing.T) {
 	}
 
 	h.create("staging-app", `
-def compose(variable, observed):
-    resource("x", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "prod-only"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "prod-only"}})
 `, "")
 	h.settle("staging-app", 2)
 

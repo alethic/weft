@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/alethic/weft/api/v1alpha1"
+	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/watches"
@@ -20,8 +21,8 @@ import (
 // Self-reference through these values is how a composition advances in stages,
 // so they are read live rather than remembered: a resource we applied minutes
 // ago is interesting precisely because its status has changed since.
-func (r *WeaveReconciler) readObserved(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (map[string]any, error) {
-	observed := make(map[string]any, len(weave.Status.Inventory))
+func (r *WeaveReconciler) readObserved(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (map[eval.Ref]map[string]any, error) {
+	observed := make(map[eval.Ref]map[string]any, len(weave.Status.Inventory))
 
 	for _, e := range weave.Status.Inventory {
 		gvk, err := inventory.GroupVersionKind(e)
@@ -33,7 +34,7 @@ func (r *WeaveReconciler) readObserved(ctx context.Context, c *kube.Client, weav
 		switch {
 		case err == nil:
 			stripNoise(obj)
-			observed[e.Key] = obj.Object
+			observed[eval.Ref{APIVersion: e.APIVersion, Kind: e.Kind, Name: e.Name}] = obj.Object
 
 		case apierrors.IsNotFound(err):
 			// Deleted out from under us. Leaving it out of observed lets the
@@ -47,9 +48,10 @@ func (r *WeaveReconciler) readObserved(ctx context.Context, c *kube.Client, weav
 			var unknown *kube.UnknownKindError
 			if errors.As(err, &unknown) {
 				return nil, waitingf(ReasonKindNotInstalled,
-					"%s is no longer installed in this cluster, so %q cannot be read back", gvk, e.Key)
+					"%s is no longer installed in this cluster, so %s %q cannot be read back",
+					gvk, e.Kind, e.Name)
 			}
-			return nil, fmt.Errorf("reading observed %q (%s %q): %w", e.Key, e.Kind, e.Name, err)
+			return nil, fmt.Errorf("reading back %s %q: %w", e.Kind, e.Name, err)
 		}
 	}
 

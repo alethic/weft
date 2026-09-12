@@ -93,10 +93,6 @@ var (
 	// between.
 	WeaveUIDAnnotation = Group + "/weave-uid"
 
-	// KeyAnnotation records the inventory key a resource was created under.
-	// This is the stable identity returned by compose(), not the object name.
-	KeyAnnotation = Group + "/key"
-
 	// OwnedAnnotation decides whether Weft owns a resource it applies. Its
 	// accepted values are "true" (the default) and "false".
 	//

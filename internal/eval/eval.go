@@ -23,32 +23,42 @@ type Request struct {
 	// calls read() fails, which is what the pure unit tests want.
 	Reader Reader
 
-	// Observed maps inventory key to the live object this Weave previously
-	// created, including current status. Self-reference through this map is how
-	// multi-phase advancement works: create an identity, wait for its provider
-	// status to populate, then create the things that consume it.
-	Observed map[string]any
+	// Observed is what each object this Weave previously created looks like
+	// now, including current status. A program reaches it through the value
+	// resource() returned rather than by looking it up, which is how
+	// multi-phase advancement works: declare an identity, and declare the
+	// things that consume its provider status only once that status is there.
+	Observed map[Ref]map[string]any
 }
 
-// Resource is one entry of a successful evaluation, in return order.
-type Resource struct {
-	// Key is the stable inventory identity: the key compose() returned it
-	// under.
-	Key string
+// Ref identifies one object: the only identity a composition has that anybody
+// outside it can see.
+type Ref struct {
+	APIVersion string
+	Kind       string
+	Name       string
+}
 
-	// Object is the resource body as returned, unmodified. Normalisation
+func (r Ref) String() string { return fmt.Sprintf("%s %s/%s", r.Kind, r.APIVersion, r.Name) }
+
+// Resource is one entry of a successful evaluation, in declaration order.
+type Resource struct {
+	// Ref identifies the object this describes.
+	Ref Ref
+
+	// Object is the resource body as declared, unmodified. Normalisation
 	// (namespace, owner references, labels) is the caller's job so that
 	// evaluation stays pure.
 	Object map[string]any
 
-	// Needs are the keys of the resources this one depends on, resolved from
-	// the references the program made with resource(..., needs=[...]).
+	// Needs are the objects this one depends on, resolved from the references
+	// the program made with resource(..., needs=[...]).
 	//
 	// Empty means the program said nothing, which the caller reads as "after
 	// whatever came before me" - the order the program already wrote. A
 	// resource that named an empty list says it depends on nothing, and that
 	// distinction is the difference between a chain and a fan-out.
-	Needs []string
+	Needs []Ref
 
 	// NeedsDeclared is true when the program passed needs at all, empty or not.
 	NeedsDeclared bool

@@ -27,8 +27,10 @@ import (
 
 // Item is one normalised resource ready to apply.
 type Item struct {
-	// Key is the stable identity from the program's returned mapping.
-	Key string
+	// Ref identifies the object. There is no separate key: a composition
+	// describes objects, and the object is the only identity anything outside
+	// the program can see.
+	Ref eval.Ref
 
 	// Object is normalised and owned, ready for server-side apply.
 	Object *unstructured.Unstructured
@@ -67,31 +69,29 @@ func (i Item) GroupVersionKind() schema.GroupVersionKind { return i.Object.Group
 // out at the same depth without anybody deciding that they should.
 func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Item, error) {
 	items := make([]Item, 0, len(resources))
-	needs := make(map[string][]string, len(resources))
-	index := make(map[string]int, len(resources))
+	needs := make(map[eval.Ref][]eval.Ref, len(resources))
 
 	for i, r := range resources {
-		owned, err := ownedFrom(r.Object, r.Key)
+		owned, err := ownedFrom(r.Object, r.Ref)
 		if err != nil {
 			return nil, err
 		}
 
-		u, err := kube.Normalize(r.Object, r.Key, namespace, owner, owned)
+		u, err := kube.Normalize(r.Object, namespace, owner, owned)
 		if err != nil {
-			return nil, fmt.Errorf("resource %q %w", r.Key, err)
+			return nil, fmt.Errorf("%s %w", r.Ref, err)
 		}
 
 		deps := r.Needs
 		if !r.NeedsDeclared && i > 0 {
 			// Undeclared means "after whatever came before me", which is what
-			// the program already said by returning it in that order. Only a
+			// the program already said by declaring it in that order. Only a
 			// resource that names its dependencies is freed from the chain.
-			deps = []string{resources[i-1].Key}
+			deps = []eval.Ref{resources[i-1].Ref}
 		}
 
-		needs[r.Key] = deps
-		index[r.Key] = i
-		items = append(items, Item{Key: r.Key, Object: u, Owned: owned})
+		needs[r.Ref] = deps
+		items = append(items, Item{Ref: r.Ref, Object: u, Owned: owned})
 	}
 
 	levels, err := depths(items, needs)
@@ -99,7 +99,7 @@ func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Ite
 		return nil, err
 	}
 	for i := range items {
-		items[i].Wave = levels[items[i].Key]
+		items[i].Wave = levels[items[i].Ref]
 	}
 
 	return items, nil
@@ -111,18 +111,18 @@ func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Ite
 // A cycle is reported rather than broken. Breaking one silently would produce an
 // apply order that looks fine and is not, and the program said something
 // impossible: the author has to decide which edge is wrong.
-func depths(items []Item, needs map[string][]string) (map[string]int32, error) {
-	known := make(map[string]bool, len(items))
+func depths(items []Item, needs map[eval.Ref][]eval.Ref) (map[eval.Ref]int32, error) {
+	known := make(map[eval.Ref]bool, len(items))
 	for _, it := range items {
-		known[it.Key] = true
+		known[it.Ref] = true
 	}
 	for _, it := range items {
-		for _, dep := range needs[it.Key] {
+		for _, dep := range needs[it.Ref] {
 			if !known[dep] {
-				// resolveNeeds has already refused a reference to something that
-				// was not returned, so reaching here means the evaluator and
+				// checkNeeds has already refused a reference to something that
+				// was never declared, so reaching here means the evaluator and
 				// this planner disagree about what came back.
-				return nil, fmt.Errorf("resource %q needs %q, which is not in the result", it.Key, dep)
+				return nil, fmt.Errorf("%s needs %s, which is not in the result", it.Ref, dep)
 			}
 		}
 	}
@@ -132,17 +132,17 @@ func depths(items []Item, needs map[string][]string) (map[string]int32, error) {
 		onStack   = 1
 		done      = 2
 	)
-	state := make(map[string]int, len(items))
-	level := make(map[string]int32, len(items))
+	state := make(map[eval.Ref]int, len(items))
+	level := make(map[eval.Ref]int32, len(items))
 
-	var visit func(key string, path []string) error
-	visit = func(key string, path []string) error {
+	var visit func(key eval.Ref, path []eval.Ref) error
+	visit = func(key eval.Ref, path []eval.Ref) error {
 		switch state[key] {
 		case done:
 			return nil
 		case onStack:
-			return fmt.Errorf("resources %s form a dependency cycle, so there is no order in which "+
-				"they can be applied", describeCycle(append(path, key)))
+			return fmt.Errorf("%s form a dependency cycle, so there is no order in which they can "+
+				"be applied", describeCycle(append(path, key)))
 		}
 
 		state[key] = onStack
@@ -161,7 +161,7 @@ func depths(items []Item, needs map[string][]string) (map[string]int32, error) {
 	}
 
 	for _, it := range items {
-		if err := visit(it.Key, nil); err != nil {
+		if err := visit(it.Ref, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -169,7 +169,7 @@ func depths(items []Item, needs map[string][]string) (map[string]int32, error) {
 }
 
 // describeCycle renders the loop starting from where it closes.
-func describeCycle(path []string) string {
+func describeCycle(path []eval.Ref) string {
 	closing := path[len(path)-1]
 	from := 0
 	for i, k := range path {
@@ -178,11 +178,11 @@ func describeCycle(path []string) string {
 			break
 		}
 	}
-	quoted := make([]string, 0, len(path)-from)
+	parts := make([]string, 0, len(path)-from)
 	for _, k := range path[from:] {
-		quoted = append(quoted, fmt.Sprintf("%q", k))
+		parts = append(parts, k.String())
 	}
-	return strings.Join(quoted, " -> ")
+	return strings.Join(parts, " -> ")
 }
 
 // ownedFrom reads the ownership annotation off a returned resource.
@@ -190,7 +190,7 @@ func describeCycle(path []string) string {
 // A typo is rejected rather than ignored. "owned: no" quietly meaning "owned"
 // is precisely the failure this annotation exists to prevent, and it would only
 // be discovered by the object being deleted.
-func ownedFrom(obj map[string]any, key string) (bool, error) {
+func ownedFrom(obj map[string]any, ref eval.Ref) (bool, error) {
 	md, _ := obj["metadata"].(map[string]any)
 	annotations, _ := md["annotations"].(map[string]any)
 	raw, ok := annotations[naming.OwnedAnnotation]
@@ -203,8 +203,8 @@ func ownedFrom(obj map[string]any, key string) (bool, error) {
 	case "false":
 		return false, nil
 	default:
-		return false, fmt.Errorf("resource %q has %s=%v, which must be \"true\" or \"false\"",
-			key, naming.OwnedAnnotation, raw)
+		return false, fmt.Errorf("%s has %s=%v, which must be \"true\" or \"false\"",
+			ref, naming.OwnedAnnotation, raw)
 	}
 }
 
@@ -227,38 +227,11 @@ type Diff struct {
 	// a transient absence, and nothing here is destroyed - a release that turns
 	// out to be premature is undone by the next pass recording it again.
 	Released []v1alpha1.InventoryEntry
-
-	// Replaced is inventory whose key is still returned but which now names a
-	// different object, because the program was edited to change a name or a
-	// kind under a stable key.
-	//
-	// The old object has to be deleted or it is orphaned: the inventory records
-	// the new one under that key and nothing remembers the old, which is
-	// exactly the failure of applying without pruning. No hysteresis applies -
-	// the program said the object is different, which is a statement rather
-	// than an absence.
-	Replaced []v1alpha1.InventoryEntry
 }
 
-// objectID is what an inventory entry actually addresses, as distinct from the
-// key that identifies it.
-type objectID struct {
-	apiVersion string
-	kind       string
-	name       string
-}
-
-func idOfEntry(e v1alpha1.InventoryEntry) objectID {
-	return objectID{apiVersion: e.APIVersion, kind: e.Kind, name: e.Name}
-}
-
-func idOfItem(i Item) objectID {
-	gvk := i.GroupVersionKind()
-	return objectID{
-		apiVersion: gvk.GroupVersion().String(),
-		kind:       gvk.Kind,
-		name:       i.Object.GetName(),
-	}
+// refOfEntry is what an inventory entry addresses.
+func refOfEntry(e v1alpha1.InventoryEntry) eval.Ref {
+	return eval.Ref{APIVersion: e.APIVersion, Kind: e.Kind, Name: e.Name}
 }
 
 // Compute diffs a desired set against the recorded inventory.
@@ -282,40 +255,16 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 		threshold = 1
 	}
 
-	wanted := make(map[string]objectID, len(desired))
-	claimed := make(map[objectID]bool, len(desired))
+	wanted := make(map[eval.Ref]bool, len(desired))
 	for _, item := range desired {
-		id := idOfItem(item)
-		wanted[item.Key] = id
-		claimed[id] = true
+		wanted[item.Ref] = true
 	}
 
 	d := Diff{Apply: append([]Item(nil), desired...)}
 	sort.SliceStable(d.Apply, func(i, j int) bool { return d.Apply[i].Wave < d.Apply[j].Wave })
 
 	for _, e := range current {
-		if id, ok := wanted[e.Key]; ok {
-			// The key survived, but check what it now addresses. An edit that
-			// changes a name or a kind under a stable key leaves the old object
-			// behind, and nothing would ever look at it again.
-			if idOfEntry(e) != id {
-				// The old object is no longer described by anything. Releasing
-				// it honours the annotation it was applied with; deleting it
-				// would make "do not delete this" mean "unless the program is
-				// edited", which is not what it says.
-				if !e.Owned {
-					d.Released = append(d.Released, e)
-				} else {
-					d.Replaced = append(d.Replaced, e)
-				}
-			}
-			continue
-		}
-
-		// The key is gone, but the object it addressed may have been re-keyed
-		// rather than dropped. Deleting it would destroy something the program
-		// still asks for; the new key owns the record now.
-		if claimed[idOfEntry(e)] {
+		if wanted[refOfEntry(e)] {
 			continue
 		}
 
@@ -342,7 +291,6 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 		}
 	}
 	sortDescending(d.Prune)
-	sortDescending(d.Replaced)
 	sortDescending(d.Released)
 	return d
 }
@@ -355,7 +303,6 @@ func sortDescending(entries []v1alpha1.InventoryEntry) {
 func Entry(item Item, applied *unstructured.Unstructured) v1alpha1.InventoryEntry {
 	gvk := item.GroupVersionKind()
 	e := v1alpha1.InventoryEntry{
-		Key:        item.Key,
 		APIVersion: gvk.GroupVersion().String(),
 		Kind:       gvk.Kind,
 		Name:       item.Object.GetName(),
@@ -382,7 +329,7 @@ func Merge(applied []v1alpha1.InventoryEntry, retained []v1alpha1.InventoryEntry
 		if out[i].Wave != out[j].Wave {
 			return out[i].Wave < out[j].Wave
 		}
-		return out[i].Key < out[j].Key
+		return refOfEntry(out[i]).String() < refOfEntry(out[j]).String()
 	})
 	return out
 }
@@ -411,7 +358,9 @@ func Waves(entries []v1alpha1.InventoryEntry) [][]v1alpha1.InventoryEntry {
 	out := make([][]v1alpha1.InventoryEntry, 0, len(waves))
 	for _, w := range waves {
 		group := byWave[w]
-		sort.SliceStable(group, func(i, j int) bool { return group[i].Key < group[j].Key })
+		sort.SliceStable(group, func(i, j int) bool {
+			return refOfEntry(group[i]).String() < refOfEntry(group[j]).String()
+		})
 		out = append(out, group)
 	}
 	return out
@@ -435,7 +384,9 @@ func ApplyWaves(items []Item) [][]Item {
 	out := make([][]Item, 0, len(waves))
 	for _, w := range waves {
 		group := byWave[w]
-		sort.SliceStable(group, func(i, j int) bool { return group[i].Key < group[j].Key })
+		sort.SliceStable(group, func(i, j int) bool {
+			return group[i].Ref.String() < group[j].Ref.String()
+		})
 		out = append(out, group)
 	}
 	return out
@@ -445,7 +396,8 @@ func ApplyWaves(items []Item) [][]Item {
 func GroupVersionKind(e v1alpha1.InventoryEntry) (schema.GroupVersionKind, error) {
 	gv, err := schema.ParseGroupVersion(e.APIVersion)
 	if err != nil {
-		return schema.GroupVersionKind{}, fmt.Errorf("inventory entry %q has an unparseable apiVersion %q: %w", e.Key, e.APIVersion, err)
+		return schema.GroupVersionKind{}, fmt.Errorf(
+			"inventory entry %s %q has an unparseable apiVersion %q: %w", e.Kind, e.Name, e.APIVersion, err)
 	}
 	return gv.WithKind(e.Kind), nil
 }

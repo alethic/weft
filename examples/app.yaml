@@ -91,7 +91,7 @@ spec:
             },
         }
 
-    def compose(variable, observed):
+    def compose(variable):
 
         resourceGroup = read("azure.m.upbound.io/v1beta1", "ResourceGroup", "sweep-env")
 
@@ -101,8 +101,9 @@ spec:
 
         rg_id = require(resourceGroup, "status.atProvider.id")
 
+        declared = {}
         for suffix in IDENTITIES:
-            resource("identity-" + suffix, identity(variable, rg_id, suffix), needs=[])
+            declared[suffix] = resource(identity(variable, rg_id, suffix), needs=[])
 
         # Phase two. principalId is written back by the provider minutes after
         # the apply returns, so an identity we just created is exactly as
@@ -111,7 +112,7 @@ spec:
         # depends on it.
         principals = {}
         for suffix in IDENTITIES:
-            pid = get(observed, ["identity-" + suffix, "status", "atProvider", "principalId"])
+            pid = get(declared[suffix].observed, "status.atProvider.principalId")
             if pid:
                 principals[suffix] = pid
 
@@ -133,16 +134,11 @@ spec:
                 pending("status.atProvider.id on " + role.scope)
                 continue
 
-            resource("ra-" + role.name, {
+            resource({
                 "apiVersion": "authorization.azure.m.upbound.io/v1beta1",
                 "kind": "RoleAssignment",
                 "metadata": {
                     "name": variable.prefix + "-" + role.name,
-                    # Each names the identity it grants a role to. They have
-                    # no dependency on each other, so they come out at the same
-                    # depth and teardown removes them in a single step instead
-                    # of one round trip at a time.
-                    "annotations": {"weft.run/needs": "identity-" + role.principal},
                 },
                 "spec": {
                     "providerConfigRef": variable.providerConfigRef,

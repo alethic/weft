@@ -32,13 +32,13 @@ func (r *WeaveReconciler) checkOwnership(
 	weave *v1alpha1.Weave,
 	item inventory.Item,
 ) error {
-	// Already ours under this key, and still addressing the same object.
-	if e, ok := weave.Status.InventoryByKey(item.Key); ok && sameObject(e, item) {
-		return nil
-	}
-
 	gvk := item.GroupVersionKind()
 	name := item.Object.GetName()
+
+	// Already ours: the inventory records this object.
+	if _, ok := weave.Status.InventoryFor(gvk.GroupVersion().String(), gvk.Kind, name); ok {
+		return nil
+	}
 
 	existing, err := c.Get(ctx, gvk, name)
 	switch {
@@ -52,7 +52,7 @@ func (r *WeaveReconciler) checkOwnership(
 			// its own problem and is reported as one, rather than being taken
 			// as permission to overwrite blindly.
 			return degradedf(ReasonForbidden,
-				"checking whether %q already exists before creating it:\n%s", item.Key, perm.Error())
+				"checking whether %s already exists before creating it:\n%s", item.Ref, perm.Error())
 		}
 		var unknown *kube.UnknownKindError
 		if errors.As(err, &unknown) {
@@ -63,7 +63,7 @@ func (r *WeaveReconciler) checkOwnership(
 		if errors.As(err, &scoped) {
 			return nil
 		}
-		return fmt.Errorf("checking whether %q already exists: %w", item.Key, err)
+		return fmt.Errorf("checking whether %s already exists: %w", item.Ref, err)
 	}
 
 	owner := weftOwner(existing, weave)
@@ -74,7 +74,7 @@ func (r *WeaveReconciler) checkOwnership(
 		return degradedf(ReasonNotOurs,
 			"resource %q would create %s %q, which the Weave %q already owns. Two Weaves cannot manage one "+
 				"object: they would apply over each other on every reconcile. Remove it from one of them.",
-			item.Key, gvk.Kind, name, owner.otherWeave)
+			item.Ref, gvk.Kind, name, owner.otherWeave)
 
 	case !owner.ours && !owner.adoptableBy(weave.Name):
 		return degradedf(ReasonNotOurs, "%s", adoptionMessage(item, existing, owner, weave.Name))
@@ -86,16 +86,6 @@ func (r *WeaveReconciler) checkOwnership(
 			"took ownership of %s %q, which was annotated %s=%s. Deleting this Weave now deletes it.",
 			gvk.Kind, name, naming.AdoptAnnotation, owner.adopt)
 		return nil
-
-	case owner.key != "" && owner.key != item.Key:
-		// Ours, but two keys are claiming one object. Whichever applied last
-		// would win and the other would be recorded pointing at something it
-		// does not control.
-		return degradedf(ReasonNotOurs,
-			"resources %q and %q both produce %s %q. A key is the identity of an object, so two of them "+
-				"cannot name one: whichever applies last would win, and the other would be recorded "+
-				"pointing at something it does not control.",
-			owner.key, item.Key, gvk.Kind, name)
 
 	case owner.reclaimed:
 		// Ours by provenance but absent from the inventory: a status that was
@@ -133,8 +123,6 @@ type weftOwnership struct {
 	// describe an object made by a different Weave that carries no owner
 	// reference, which is what an unowned resource looks like.
 	weave string
-	// key is the inventory key it was created under, when Weft made it.
-	key string
 	// otherWeave names a different Weave that owns it, when one does.
 	otherWeave string
 	// manager is whichever field manager last wrote it, when nobody owns it.
@@ -174,7 +162,6 @@ func (o weftOwnership) adoptableBy(weave string) bool {
 func weftOwner(obj *unstructured.Unstructured, weave *v1alpha1.Weave) weftOwnership {
 	annotations := obj.GetAnnotations()
 	out := weftOwnership{
-		key:   annotations[naming.KeyAnnotation],
 		adopt: annotations[naming.AdoptAnnotation],
 		weave: obj.GetLabels()[naming.WeaveLabel],
 	}
@@ -217,7 +204,7 @@ func weftOwner(obj *unstructured.Unstructured, weave *v1alpha1.Weave) weftOwners
 func adoptionMessage(item inventory.Item, existing *unstructured.Unstructured, owner weftOwnership, ownerName string) string {
 	gvk := item.GroupVersionKind()
 	msg := fmt.Sprintf("resource %q would create %s %q, which already exists and this Weave did not create.",
-		item.Key, gvk.Kind, item.Object.GetName())
+		item.Ref, gvk.Kind, item.Object.GetName())
 
 	if owner.manager != "" {
 		msg += fmt.Sprintf("\n\nIt was last written by %q.", owner.manager)
@@ -241,13 +228,4 @@ func adoptionMessage(item inventory.Item, existing *unstructured.Unstructured, o
 		fmt.Sprintf("  kubectl -n %s delete %s %s",
 			existing.GetNamespace(), gvk.Kind, item.Object.GetName())
 	return msg
-}
-
-// sameObject reports whether an inventory entry addresses the same object as an
-// item. The key identifies the entry; this is what the entry points at.
-func sameObject(e *v1alpha1.InventoryEntry, item inventory.Item) bool {
-	gvk := item.GroupVersionKind()
-	return e.APIVersion == gvk.GroupVersion().String() &&
-		e.Kind == gvk.Kind &&
-		e.Name == item.Object.GetName()
 }

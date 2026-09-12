@@ -26,9 +26,9 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         upstream = read("v1", "ConfigMap", "upstream", hold=True)
-        resource("derived", {
+        resource({
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": "derived-from-upstream"},

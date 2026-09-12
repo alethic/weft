@@ -23,7 +23,7 @@ spec:
 
 
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         appIdentity = read("managedidentity.azure.m.upbound.io/v1beta1", "UserAssignedIdentity", "sweep-env-app")
         kedaIdentity = read("managedidentity.azure.m.upbound.io/v1beta1", "UserAssignedIdentity", "sweep-env-keda")
         vault = read("keyvault.azure.m.upbound.io/v1beta1", "Vault", "sweep-env")
@@ -72,7 +72,7 @@ spec:
             },
         }
 
-        resource("values", {
+        resource({
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": variable.targetConfigMap},

@@ -18,7 +18,7 @@ spec:
   serviceAccountName: composer
 
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         tenant = read("v1", "ConfigMap", "tenant")
         licence = read("v1", "ConfigMap", "licence")
         # The ordering gate. Nothing below reads a field off it; its existence
@@ -26,7 +26,7 @@ spec:
         if not licence:
             return wait("no licence ConfigMap in this namespace yet")
 
-        resource("greeting", {
+        resource({
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": "greeting"},

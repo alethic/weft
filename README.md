@@ -37,7 +37,7 @@ spec:
       prefix: demo            # overrides for this Weave
 
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         tenant = read("v1", "ConfigMap", "tenant")
         if not tenant:
             return wait("no tenant ConfigMap in this namespace yet")
@@ -146,7 +146,7 @@ resource you are not allowed to read is an error, never a quiet `None`.
 composition advances in phases by returning only what it can:
 
 ```python
-def compose(variable, observed):
+def compose(variable):
     out = {"identity": {...}}
 
     # The provider writes principalId back minutes after the apply returns.

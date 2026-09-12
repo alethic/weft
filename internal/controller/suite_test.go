@@ -290,8 +290,8 @@ func TestReconcileAppliesAndOwns(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "abc-123"})
 
 	h.create("app", `
-def compose(variable, observed):
-    resource("settings", {
+def compose(variable):
+    resource({
         "apiVersion": "v1",
         "kind": "ConfigMap",
         "metadata": {"name": "settings"},
@@ -319,7 +319,7 @@ def compose(variable, observed):
 	if cm.Labels[naming.WeaveLabel] != "app" {
 		t.Errorf("labels = %v", cm.Labels)
 	}
-	if len(w.Status.Inventory) != 1 || w.Status.Inventory[0].Key != "settings" {
+	if len(w.Status.Inventory) != 1 || w.Status.Inventory[0].Name != "settings" {
 		t.Errorf("inventory = %+v", w.Status.Inventory)
 	}
 }
@@ -332,8 +332,8 @@ func TestSteadyStateDoesNotChurn(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "abc"})
 
 	h.create("app", `
-def compose(variable, observed):
-    resource("settings", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "settings"},
         "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
@@ -361,17 +361,17 @@ func TestStagingThroughObserved(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "abc"})
 
 	h.create("app", `
-def compose(variable, observed):
-    resource("identity", {
+def compose(variable):
+    identity = resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "identity"},
         "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
     })
-    uid = get(observed, ["identity", "metadata", "uid"])
+    uid = get(identity.observed, "metadata.uid")
     if not uid:
         pending("the identity has no uid yet")
         return
-    resource("consumer", {
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "consumer"},
         "data": {"principalId": uid},
@@ -417,10 +417,10 @@ func TestSourceGateWithoutBeingRead(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("gated", `
-def compose(variable, observed):
+def compose(variable):
     if not read("v1", "ConfigMap", "gate"):
         return wait("the gate ConfigMap has not been created yet")
-    resource("out", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}})
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}})
 `, "")
 
 	h.reconcile("gated")
@@ -460,10 +460,10 @@ func TestPruneWaitsOutTheDelay(t *testing.T) {
 	h.configMap("tenant", map[string]string{"keep": "yes", "extra": "yes"})
 
 	program := `
-def compose(variable, observed):
-    resource("keep", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}})
     if has(read("v1", "ConfigMap", "tenant"), "data.extra"):
-        resource("extra", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}})
+        resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}})
     return
 `
 	h.create("pruner", program, "")
@@ -490,7 +490,7 @@ def compose(variable, observed):
 	}
 
 	w := h.weave("pruner")
-	entry, ok := w.Status.InventoryByKey("extra")
+	entry, ok := w.Status.InventoryFor("v1", "ConfigMap", "extra")
 	if !ok {
 		t.Fatal("extra should still be in the inventory while it waits out the delay")
 	}
@@ -512,14 +512,14 @@ def compose(variable, observed):
 	// The delete has been issued but not yet confirmed, so the entry is still
 	// recorded and the Weave says it is tearing down. Dropping it before the
 	// object is actually gone would orphan anything that failed to delete.
-	if _, ok := h.weave("pruner").Status.InventoryByKey("extra"); !ok {
+	if _, ok := h.weave("pruner").Status.InventoryFor("v1", "ConfigMap", "extra"); !ok {
 		t.Error("the entry should be held until the deletion is confirmed")
 	}
 	requireCondition(t, h.weave("pruner"), naming.ConditionWaiting, metav1.ConditionTrue)
 
 	// The next pass confirms it and drops the record.
 	h.reconcile("pruner")
-	if _, ok := h.weave("pruner").Status.InventoryByKey("extra"); ok {
+	if _, ok := h.weave("pruner").Status.InventoryFor("v1", "ConfigMap", "extra"); ok {
 		t.Error("the pruned entry should be out of the inventory once its deletion is confirmed")
 	}
 	requireCondition(t, h.weave("pruner"), naming.ConditionReady, metav1.ConditionTrue)
@@ -535,10 +535,10 @@ func TestReappearanceCancelsThePrune(t *testing.T) {
 	h.configMap("tenant", map[string]string{"extra": "yes"})
 
 	program := `
-def compose(variable, observed):
-    resource("keep", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}})
     if has(read("v1", "ConfigMap", "tenant"), "data.extra"):
-        resource("extra", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}})
+        resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}})
     return
 `
 	h.create("flapper", program, "")
@@ -551,7 +551,7 @@ def compose(variable, observed):
 	}
 	h.reconcile("flapper")
 
-	if e, ok := h.weave("flapper").Status.InventoryByKey("extra"); !ok || e.MissingSince == nil {
+	if e, ok := h.weave("flapper").Status.InventoryFor("v1", "ConfigMap", "extra"); !ok || e.MissingSince == nil {
 		t.Fatal("the clock should be running")
 	}
 
@@ -563,7 +563,7 @@ def compose(variable, observed):
 	}
 	h.reconcile("flapper")
 
-	e, ok := h.weave("flapper").Status.InventoryByKey("extra")
+	e, ok := h.weave("flapper").Status.InventoryFor("v1", "ConfigMap", "extra")
 	if !ok {
 		t.Fatal("extra should be back in the inventory")
 	}
@@ -581,9 +581,9 @@ func TestOrderedTeardown(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("stack", `
-def compose(variable, observed):
+def compose(variable):
     for i, name in enumerate(["base", "middle", "top"]):
-        resource(name, {
+        resource({
             "apiVersion": "v1", "kind": "ConfigMap",
             "metadata": {"name": name},
         })
@@ -597,9 +597,9 @@ def compose(variable, observed):
 	}
 	// Return order became apply order.
 	for i, want := range []string{"base", "middle", "top"} {
-		if w.Status.Inventory[i].Key != want || w.Status.Inventory[i].Wave != int32(i) {
+		if w.Status.Inventory[i].Name != want || w.Status.Inventory[i].Wave != int32(i) {
 			t.Fatalf("inventory[%d] = %s wave %d, want %s wave %d",
-				i, w.Status.Inventory[i].Key, w.Status.Inventory[i].Wave, want, i)
+				i, w.Status.Inventory[i].Name, w.Status.Inventory[i].Wave, want, i)
 		}
 	}
 
@@ -661,7 +661,7 @@ func TestProgramFaultIsDegraded(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("broken", `
-def compose(variable, observed):
+def compose(variable):
     fail("the role table is empty")
 `, "")
 
@@ -682,8 +682,8 @@ func TestCrossNamespaceOutputIsRefused(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("escapee", `
-def compose(variable, observed):
-    resource("out", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "out", "namespace": "somewhere-else"},
         })
@@ -705,8 +705,8 @@ func TestDeletedOutputIsRecreated(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("healer", `
-def compose(variable, observed):
-    resource("out", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}})
 `, "")
 	h.settle("healer", 2)
 
@@ -727,7 +727,7 @@ def compose(variable, observed):
 	if recreated.UID == originalUID {
 		t.Error("expected a genuinely new object")
 	}
-	if _, ok := h.weave("healer").Status.InventoryByKey("out"); !ok {
+	if _, ok := h.weave("healer").Status.InventoryFor("v1", "ConfigMap", "out"); !ok {
 		t.Error("the inventory should still record it")
 	}
 }
@@ -741,9 +741,9 @@ func TestEditingTheProgramConverges(t *testing.T) {
 	})
 
 	h.create("editable", `
-def compose(variable, observed):
-    resource("a", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}})
-    resource("b", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "b"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}})
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "b"}})
 `, "")
 	h.settle("editable", 2)
 
@@ -753,8 +753,8 @@ def compose(variable, observed):
 
 	w := h.weave("editable")
 	w.Spec.Program = `
-def compose(variable, observed):
-    resource("a", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}})
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
 		t.Fatal(err)
@@ -774,22 +774,22 @@ def compose(variable, observed):
 // Renaming a key is not a rename. It deletes one resource and creates another,
 // and the inventory has to reflect that rather than silently re-labelling a
 // live object.
-func TestRenamingAKeyReplacesTheResource(t *testing.T) {
+func TestRenamingPrunesTheOldAndCreatesTheNew(t *testing.T) {
 	h := newHarness(t, func(o *Options) {
 		o.PruneDelay = time.Millisecond
 		o.PruneThreshold = 1
 	})
 
 	h.create("renamer", `
-def compose(variable, observed):
-    resource("old", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "old-name"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "old-name"}})
 `, "")
 	h.settle("renamer", 2)
 
 	w := h.weave("renamer")
 	w.Spec.Program = `
-def compose(variable, observed):
-    resource("new", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "new-name"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "new-name"}})
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
 		t.Fatal(err)
@@ -805,7 +805,7 @@ def compose(variable, observed):
 		t.Error("the old resource should have been pruned")
 	}
 	inv := h.weave("renamer").Status.Inventory
-	if len(inv) != 1 || inv[0].Key != "new" {
+	if len(inv) != 1 || inv[0].Name != "new-name" {
 		t.Errorf("inventory = %+v", inv)
 	}
 }
@@ -815,7 +815,7 @@ def compose(variable, observed):
 func TestFinalizerIsAddedFirst(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("finalized", `
-def compose(variable, observed):
+def compose(variable):
     return
 `, "")
 
@@ -840,8 +840,8 @@ func TestVariablesKeepTheirTypes(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("typed", `
-def compose(variable, observed):
-    resource("out", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "out"},
         "data": {"replicas": str(variable.replicas), "doubled": str(variable.replicas * 2)},

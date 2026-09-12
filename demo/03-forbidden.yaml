@@ -17,9 +17,9 @@ metadata:
 spec:
   serviceAccountName: powerless
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         platform = read("v1", "ConfigMap", "platform")
-        resource("should-never-exist", {
+        resource({
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": "should-never-exist"},

@@ -15,12 +15,12 @@ import (
 // echo returns every input back out as a ConfigMap, so a test can read what the
 // program actually saw.
 const echoVariables = `
-def compose(variable, observed):
+def compose(variable):
     data = {}
     for k in variable:
         v = variable[k]
         data[k] = v if type(v) == "string" else to_json(v)
-    resource("echo", {
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "echo"},
         "data": data,

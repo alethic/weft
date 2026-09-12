@@ -16,9 +16,9 @@ func TestReadResolvesThroughImpersonation(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "acme-42"})
 
 	h.create("reader", `
-def compose(variable, observed):
+def compose(variable):
     tenant = read("v1", "ConfigMap", "tenant")
-    resource("greeting", {
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "greeting"},
         "data": {"tenant": require(tenant, "data.tenantId")},
@@ -42,7 +42,7 @@ func TestReadsAreRecordedOnStatus(t *testing.T) {
 	h.configMap("tenant", map[string]string{"tenantId": "acme-42"})
 
 	h.create("recorder", `
-def compose(variable, observed):
+def compose(variable):
     read("v1", "ConfigMap", "tenant")
     return
 `, "")
@@ -61,9 +61,9 @@ func TestAChangeToSomethingReadWakesTheWeave(t *testing.T) {
 	h.configMap("settings", map[string]string{"mode": "before"})
 
 	h.create("reactive", `
-def compose(variable, observed):
+def compose(variable):
     settings = read("v1", "ConfigMap", "settings")
-    resource("echo", {
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "echo"},
         "data": {"mode": require(settings, "data.mode")},
@@ -98,10 +98,10 @@ func TestAbsentReadGatesInTheProgram(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("gated", `
-def compose(variable, observed):
+def compose(variable):
     if not read("v1", "ConfigMap", "licence"):
         return wait("no licence ConfigMap in this namespace yet")
-    resource("greeting", {
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "greeting"},
         })
@@ -141,8 +141,8 @@ func TestReadIsDeniedWithoutPermission(t *testing.T) {
 		Spec: v1alpha1.WeaveSpec{
 			ServiceAccountName: "powerless",
 			Program: `
-def compose(variable, observed):
-    resource("x", read("v1", "ConfigMap", "classified"))
+def compose(variable):
+    resource(read("v1", "ConfigMap", "classified"))
 `,
 		},
 	}
@@ -179,9 +179,9 @@ func TestSelectMatchesByLabel(t *testing.T) {
 	}
 
 	h.create("selector", `
-def compose(variable, observed):
+def compose(variable):
     found = select("v1", "ConfigMap", labels={"role": "tenant"})
-    resource("list", {
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "list"},
         "data": {"names": ",".join([c.metadata.name for c in found])},
@@ -205,11 +205,11 @@ func TestFinalizeRecordsAndPlacesAHold(t *testing.T) {
 	h.configMap("upstream", map[string]string{"ok": "true"})
 
 	h.create("holder", `
-def compose(variable, observed):
+def compose(variable):
     up = read("v1", "ConfigMap", "upstream", hold=True)
     if not up:
         return wait("no upstream yet")
-    resource("derived", {
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "derived"},
         })
@@ -238,7 +238,7 @@ func TestHoldIsReleasedWhenTheProgramStopsAskingForIt(t *testing.T) {
 	h.configMap("upstream", map[string]string{"ok": "true"})
 
 	h.create("relaxing", `
-def compose(variable, observed):
+def compose(variable):
     read("v1", "ConfigMap", "upstream", hold=True)
     return
 `, "")
@@ -249,7 +249,7 @@ def compose(variable, observed):
 
 	w := h.weave("relaxing")
 	w.Spec.Program = `
-def compose(variable, observed):
+def compose(variable):
     read("v1", "ConfigMap", "upstream")
     return
 `

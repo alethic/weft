@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -15,104 +14,6 @@ import (
 	"github.com/alethic/weft/internal/naming"
 )
 
-// Editing a program has to converge: what it stopped describing goes, what it
-// started describing arrives, and what it changed under a stable key does not
-// end up orphaned.
-func TestEditingReplacesRatherThanOrphans(t *testing.T) {
-	h := newHarness(t, func(o *Options) {
-		o.PruneDelay = time.Millisecond
-		o.PruneThreshold = 1
-	})
-
-	h.create("editable", `
-def compose(variable, observed):
-    resource("thing", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing-one"}})
-`, "")
-	h.settle("editable", 2)
-
-	if !h.exists("thing-one") {
-		t.Fatal("thing-one should exist")
-	}
-
-	// The same key, addressing a different object. The inventory records the
-	// new one under that key, so nothing would remember the old.
-	w := h.weave("editable")
-	w.Spec.Program = `
-def compose(variable, observed):
-    resource("thing", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing-two"}})
-`
-	if err := testK8s.Update(h.ctx, w); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	h.settle("editable", 4)
-
-	if !h.exists("thing-two") {
-		t.Error("the replacement should exist")
-	}
-	if h.exists("thing-one") {
-		t.Error("the replaced object was orphaned: still in the cluster, absent from every record")
-	}
-	if s := h.weave("editable").Status.Superseded; len(s) != 0 {
-		t.Errorf("nothing should still be awaiting removal: %+v", s)
-	}
-	inv := h.weave("editable").Status.Inventory
-	if len(inv) != 1 || inv[0].Name != "thing-two" {
-		t.Errorf("inventory = %+v", inv)
-	}
-}
-
-// Changing the kind under a stable key is the same problem wearing a different
-// hat.
-func TestEditingTheKindReplacesTheObject(t *testing.T) {
-	h := newHarness(t, func(o *Options) {
-		o.PruneDelay = time.Millisecond
-		o.PruneThreshold = 1
-	})
-
-	h.create("kindchange", `
-def compose(variable, observed):
-    resource("payload", {
-        "apiVersion": "v1", "kind": "ConfigMap",
-        "metadata": {"name": "payload"},
-        "data": {"k": "v"},
-        })
-`, "")
-	h.settle("kindchange", 2)
-
-	if !h.exists("payload") {
-		t.Fatal("the ConfigMap should exist")
-	}
-
-	w := h.weave("kindchange")
-	w.Spec.Program = `
-def compose(variable, observed):
-    resource("payload", {
-        "apiVersion": "v1", "kind": "Secret",
-        "metadata": {"name": "payload"},
-        "stringData": {"k": "v"},
-        })
-`
-	if err := testK8s.Update(h.ctx, w); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	h.settle("kindchange", 4)
-
-	if h.exists("payload") {
-		t.Error("the old ConfigMap should have been removed, not left beside the Secret")
-	}
-	var secret corev1.Secret
-	key := k8stypes.NamespacedName{Namespace: h.namespace, Name: "payload"}
-	if err := testK8s.Get(h.ctx, key, &secret); err != nil {
-		t.Fatalf("the Secret should exist: %v", err)
-	}
-	inv := h.weave("kindchange").Status.Inventory
-	if len(inv) != 1 || inv[0].Kind != "Secret" {
-		t.Errorf("inventory = %+v", inv)
-	}
-}
-
 // The full shape change: some stay, some go, some arrive, in one edit.
 func TestEditingConvergesOnTheNewShape(t *testing.T) {
 	h := newHarness(t, func(o *Options) {
@@ -121,9 +22,9 @@ func TestEditingConvergesOnTheNewShape(t *testing.T) {
 	})
 
 	h.create("shape", `
-def compose(variable, observed):
+def compose(variable):
     for n in ["keep", "drop-a", "drop-b"]:
-        resource(n, {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}})
+        resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}})
     return
 `, "")
 	h.settle("shape", 2)
@@ -136,9 +37,9 @@ def compose(variable, observed):
 
 	w := h.weave("shape")
 	w.Spec.Program = `
-def compose(variable, observed):
+def compose(variable):
     for n in ["keep", "added-a", "added-b"]:
-        resource(n, {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}})
+        resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}})
     return
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
@@ -163,78 +64,6 @@ def compose(variable, observed):
 	requireCondition(t, h.weave("shape"), naming.ConditionReady, metav1.ConditionTrue)
 }
 
-// Replaced objects come down in reverse wave order, like everything else.
-// Pinning the highest shows the lower ones are not touched past it.
-func TestReplacedObjectsAreRemovedInOrder(t *testing.T) {
-	h := newHarness(t, func(o *Options) {
-		o.PruneDelay = time.Millisecond
-		o.PruneThreshold = 1
-	})
-
-	h.create("ordered", `
-def compose(variable, observed):
-    for n in ["base", "middle", "top"]:
-        resource(n, {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n + "-v1"}})
-    return
-`, "")
-	h.settle("ordered", 2)
-
-	topOld, err := h.getConfigMap("top-v1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	topOld.Finalizers = []string{"example.com/hold"}
-	if err := testK8s.Update(h.ctx, topOld); err != nil {
-		t.Fatal(err)
-	}
-
-	w := h.weave("ordered")
-	w.Spec.Program = `
-def compose(variable, observed):
-    for n in ["base", "middle", "top"]:
-        resource(n, {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n + "-v2"}})
-    return
-`
-	if err := testK8s.Update(h.ctx, w); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	h.settle("ordered", 4)
-
-	for _, n := range []string{"base-v2", "middle-v2", "top-v2"} {
-		if !h.exists(n) {
-			t.Errorf("%s should exist", n)
-		}
-	}
-
-	base, err := h.getConfigMap("base-v1")
-	if err != nil {
-		t.Fatal("base-v1 must not be removed while a higher wave is still standing")
-	}
-	if base.DeletionTimestamp != nil {
-		t.Error("base-v1 is being deleted before the wave above it finished")
-	}
-
-	topOld, err = h.getConfigMap("top-v1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	topOld.Finalizers = nil
-	if err := testK8s.Update(h.ctx, topOld); err != nil {
-		t.Fatal(err)
-	}
-	h.settle("ordered", 5)
-
-	for _, n := range []string{"base-v1", "middle-v1", "top-v1"} {
-		if h.exists(n) {
-			t.Errorf("%s should be gone", n)
-		}
-	}
-	if s := h.weave("ordered").Status.Superseded; len(s) != 0 {
-		t.Errorf("nothing should still be awaiting removal: %+v", s)
-	}
-}
-
 // Choosing a name must not be enough to take somebody else's resource. Applying
 // would add Weft's owner reference, and deleting the Weave would then delete
 // something it never made.
@@ -243,8 +72,8 @@ func TestRefusesToTakeOverAnExistingObject(t *testing.T) {
 	h.configMap("preexisting", map[string]string{"owner": "somebody-else"})
 
 	h.create("greedy", `
-def compose(variable, observed):
-    resource("grab", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "preexisting"},
         "data": {"owner": "weft"},
@@ -286,8 +115,8 @@ func TestAdoptsWhenTheObjectConsents(t *testing.T) {
 	}
 
 	h.create("adopter", `
-def compose(variable, observed):
-    resource("onboarded", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "onboarded"},
         "data": {"owner": "weft"},
@@ -308,7 +137,7 @@ def compose(variable, observed):
 	if len(refs) != 1 || refs[0].Name != "adopter" {
 		t.Errorf("the adopted object should be owned by the Weave: %+v", refs)
 	}
-	if _, ok := h.weave("adopter").Status.InventoryByKey("onboarded"); !ok {
+	if _, ok := h.weave("adopter").Status.InventoryFor("v1", "ConfigMap", "onboarded"); !ok {
 		t.Error("the adopted object should be in the inventory")
 	}
 }
@@ -323,8 +152,8 @@ func TestAdoptionAnnotationIsSpecific(t *testing.T) {
 	}
 
 	h.create("hopeful", `
-def compose(variable, observed):
-    resource("x", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "spoken-for"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "spoken-for"}})
 `, "")
 	h.settle("hopeful", 2)
 
@@ -342,25 +171,6 @@ def compose(variable, observed):
 	}
 }
 
-// Two keys naming one object is a contradiction: whichever applied last would
-// win, and the other would be recorded pointing at something it does not
-// control.
-func TestRefusesTwoKeysForOneObject(t *testing.T) {
-	h := newHarness(t, nil)
-
-	h.create("colliding", `
-def compose(variable, observed):
-    resource("first", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "shared"}})
-    resource("second", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "shared"}})
-`, "")
-	h.settle("colliding", 3)
-
-	c := requireCondition(t, h.weave("colliding"), naming.ConditionDegraded, metav1.ConditionTrue)
-	if c.Reason != ReasonNotOurs {
-		t.Errorf("reason = %q, want %q (%s)", c.Reason, ReasonNotOurs, c.Message)
-	}
-}
-
 // kubectl delete --cascade=orphan means "delete the owner, keep the children".
 // The API server marks that with the orphan finalizer, and tearing the
 // resources down anyway would silently ignore an explicit instruction - worse
@@ -369,8 +179,8 @@ func TestOrphanPropagationKeepsTheResources(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("orphaning", `
-def compose(variable, observed):
-    resource("keeper", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "keeper"}, "data": {"k": "v"},
         })
@@ -425,8 +235,8 @@ func TestDefaultDeletionStillRemovesTheResources(t *testing.T) {
 	h := newHarness(t, nil)
 
 	h.create("cascading", `
-def compose(variable, observed):
-    resource("goes", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "goes"}})
+def compose(variable):
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "goes"}})
 `, "")
 	h.settle("cascading", 2)
 

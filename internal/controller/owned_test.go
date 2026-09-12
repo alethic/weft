@@ -11,13 +11,13 @@ import (
 )
 
 const unownedProgram = `
-def compose(variable, observed):
-    resource("ordinary", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "ordinary"},
     })
     if not variable.get("dropped", False):
-        resource("keeper", {
+        resource({
             "apiVersion": "v1", "kind": "ConfigMap",
             "metadata": {
                 "name": "keeper",
@@ -67,7 +67,7 @@ func TestUnownedResourceGetsNoOwnerReference(t *testing.T) {
 	// returned object is gone and this is all that is left to read.
 	w := h.weave("keeping")
 	for _, e := range w.Status.Inventory {
-		switch e.Key {
+		switch e.Name {
 		case "keeper":
 			if e.Owned {
 				t.Error("the keeper entry should be recorded unowned")
@@ -106,7 +106,7 @@ func TestUnownedResourceSurvivesLeavingTheWeave(t *testing.T) {
 	}
 
 	// The record is dropped immediately, though: Weft is no longer tracking it.
-	if _, ok := h.weave("dropping").Status.InventoryByKey("keeper"); ok {
+	if _, ok := h.weave("dropping").Status.InventoryFor("v1", "ConfigMap", "keeper"); ok {
 		t.Error("the inventory entry should be released at once, without hysteresis")
 	}
 }
@@ -148,8 +148,8 @@ func TestUnownedResourceSurvivesTheWeave(t *testing.T) {
 func TestOwnedAnnotationRejectsAnythingElse(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("typo", `
-def compose(variable, observed):
-    resource("x", {
+def compose(variable):
+    resource({
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "x", "annotations": {"weft.run/owned": "no"}},
         })

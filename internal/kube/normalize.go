@@ -41,7 +41,7 @@ var derivedMetadata = []string{
 // garbage collection sufficient and is why there is no ApplySet machinery
 // anywhere in this codebase. The cross-namespace and cluster-scoped cases that
 // would force something more elaborate are not expressible.
-func Normalize(obj map[string]any, key, namespace string, owner Owner, owned bool) (*unstructured.Unstructured, error) {
+func Normalize(obj map[string]any, namespace string, owner Owner, owned bool) (*unstructured.Unstructured, error) {
 	u := &unstructured.Unstructured{Object: obj}
 
 	if ns := u.GetNamespace(); ns != "" && ns != namespace {
@@ -105,7 +105,6 @@ func Normalize(obj map[string]any, key, namespace string, owner Owner, owned boo
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	annotations[naming.KeyAnnotation] = key
 	annotations[naming.WeaveUIDAnnotation] = string(owner.UID)
 	u.SetAnnotations(annotations)
 

@@ -52,9 +52,9 @@ annotations:
       spec:
         serviceAccountName: composer
         program: |
-          def compose(variable, observed):
+          def compose(variable):
               tenant = read("v1", "ConfigMap", "tenant")
-              resource("settings", {
+              resource({
                   "apiVersion": "v1",
                   "kind": "ConfigMap",
                   "metadata": {"name": "settings"},

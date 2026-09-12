@@ -75,16 +75,22 @@ func TestGeneratedCRDMatchesNaming(t *testing.T) {
 
 func TestHelpers(t *testing.T) {
 	status := WeaveStatus{
-		Inventory: []InventoryEntry{{Key: "a"}, {Key: "b"}},
+		Inventory: []InventoryEntry{
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "a"},
+			{APIVersion: "v1", Kind: "ConfigMap", Name: "b"},
+		},
 		Held: []HeldResource{
 			{APIVersion: "v1", Kind: "ConfigMap", Name: "upstream"},
 		},
 	}
-	if e, ok := status.InventoryByKey("b"); !ok || e.Key != "b" {
-		t.Error("InventoryByKey should find an entry")
+	if e, ok := status.InventoryFor("v1", "ConfigMap", "b"); !ok || e.Name != "b" {
+		t.Error("InventoryFor should find an entry")
 	}
-	if _, ok := status.InventoryByKey("c"); ok {
-		t.Error("InventoryByKey should not invent one")
+	if _, ok := status.InventoryFor("v1", "ConfigMap", "c"); ok {
+		t.Error("InventoryFor should not invent one")
+	}
+	if _, ok := status.InventoryFor("v1", "Secret", "b"); ok {
+		t.Error("InventoryFor must match on kind, not only name")
 	}
 	if _, ok := status.HeldByRef("v1", "ConfigMap", "upstream"); !ok {
 		t.Error("HeldByRef should find a recorded hold")

@@ -25,11 +25,11 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         # Return order is apply order, and therefore reverse teardown order.
         # No annotation needed: position is the default.
         for name in ["base", "middle", "top"]:
-            resource(name, {
+            resource({
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {"name": "layer-" + name},

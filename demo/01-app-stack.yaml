@@ -45,7 +45,7 @@ spec:
 
 
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         platform = read("v1", "ConfigMap", "platform")
 
         # Nothing can be built without these, so require() rather than get():
@@ -59,7 +59,7 @@ spec:
         cluster = get(platform, 'metadata.annotations["platform.example/cluster"]', "unregistered")
 
         # ---- the identity everything else hangs off -------------------------
-        resource("serviceaccount", {
+        sa = resource({
             "apiVersion": "v1",
             "kind": "ServiceAccount",
             "metadata": {"name": variable.name},
@@ -69,7 +69,7 @@ spec:
         # lands, everything downstream is simply not returned - which is
         # exactly how a provider writing status.atProvider behaves, only
         # faster.
-        sa_uid = get(observed, ["serviceaccount", "metadata", "uid"])
+        sa_uid = get(sa.observed, "metadata.uid")
         if not sa_uid:
             pending("the ServiceAccount has not been assigned a uid")
             return
@@ -98,47 +98,44 @@ spec:
             },
         }
 
-        resource("values", {
+        values = resource({
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {
                 "name": variable.name + "-values",
-                "annotations": {"weft.run/needs": "serviceaccount"},
             },
             "data": {
                 "values.yaml": to_yaml(settings),
                 "features.json": to_json([f.name for f in variable.features if f.enabled]),
             },
-        })
+        }, needs=sa)
 
         # A Secret whose contents are derived rather than stored anywhere. The
         # uid is stable for the life of the ServiceAccount, so the token is too
         # - and it changes if the identity is ever recreated.
         token = sha256(tenant + ":" + sa_uid)
-        resource("secret", {
+        secret = resource({
             "apiVersion": "v1",
             "kind": "Secret",
             "metadata": {
                 "name": variable.name + "-derived",
-                "annotations": {"weft.run/needs": "serviceaccount"},
             },
             "type": "Opaque",
             "data": {
                 "token": b64encode(token),
                 "tenant": b64encode(tenant),
             },
-        })
+        }, needs=sa)
 
-        # The fan-out. One ConfigMap per environment, all in the same wave
-        # because none of them depends on another, so teardown removes them in
-        # a single step rather than one round trip at a time.
+        # The fan-out. Each names the ServiceAccount and none of them names
+        # another, so they all come out at one depth and teardown removes them
+        # in a single step rather than one round trip at a time.
         for env in variable.environments:
-            resource("env-" + env.name, {
+            resource({
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {
                     "name": variable.name + "-" + env.name,
-                    "annotations": {"weft.run/needs": "serviceaccount"},
                     "labels": {"environment": env.name},
                 },
                 "data": {
@@ -146,20 +143,19 @@ spec:
                     "debug": str(env.debug).lower(),
                     "endpoint": "https://" + env.name + "." + region + ".example.test",
                 },
-            })
+            }, needs=sa)
 
         # ---- the workload, once what it mounts exists -----------------------
-        secret_uid = get(observed, ["secret", "metadata", "uid"])
+        secret_uid = get(secret.observed, "metadata.uid")
         if not secret_uid:
             pending("the derived Secret has not been created")
             return
 
-        resource("deployment", {
+        resource({
             "apiVersion": "apps/v1",
             "kind": "Deployment",
             "metadata": {
                 "name": variable.name,
-                "annotations": {"weft.run/needs": "values,secret"},
             },
             "spec": {
                 "replicas": variable.replicas,
@@ -193,19 +189,18 @@ spec:
                     },
                 },
             },
-        })
+        }, needs=[values, secret])
 
-        resource("service", {
+        resource({
             "apiVersion": "v1",
             "kind": "Service",
             "metadata": {
                 "name": variable.name,
-                "annotations": {"weft.run/needs": "values,secret"},
             },
             "spec": {
                 "selector": {"app": variable.name},
                 "ports": [{"port": 80, "targetPort": 80, "name": "http"}],
             },
-        })
+        }, needs=[values, secret])
 
         return

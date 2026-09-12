@@ -84,7 +84,7 @@ func TestDemoProgramsCompile(t *testing.T) {
 				Program:   w.Spec.Program,
 				Variables: variables.Inline(w.Spec.Variables),
 				Reader:    present{},
-				Observed:  map[string]any{},
+				Observed:  map[eval.Ref]map[string]any{},
 			})
 			var pe *eval.ProgramError
 			if errors.As(err, &pe) {
@@ -141,7 +141,7 @@ func TestExamplesEvaluateAgainstNothing(t *testing.T) {
 				Program:   w.Spec.Program,
 				Variables: variables.Inline(w.Spec.Variables),
 				Reader:    absent{},
-				Observed:  map[string]any{},
+				Observed:  map[eval.Ref]map[string]any{},
 			})
 
 			var pe *eval.ProgramError
@@ -171,7 +171,7 @@ func TestExamplesProduceTheirFirstWave(t *testing.T) {
 				Program:   w.Spec.Program,
 				Variables: variables.Inline(w.Spec.Variables),
 				Reader:    present{},
-				Observed:  map[string]any{},
+				Observed:  map[eval.Ref]map[string]any{},
 			})
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
@@ -201,10 +201,10 @@ func TestExamplesProduceTheirFirstWave(t *testing.T) {
 			}
 			for _, item := range items {
 				if item.Object.GetNamespace() != w.Namespace {
-					t.Errorf("%s landed in namespace %q", item.Key, item.Object.GetNamespace())
+					t.Errorf("%s landed in namespace %q", item.Ref, item.Object.GetNamespace())
 				}
 				if len(item.Object.GetOwnerReferences()) != 1 {
-					t.Errorf("%s is not owned by the Weave", item.Key)
+					t.Errorf("%s is not owned by the Weave", item.Ref)
 				}
 			}
 		})

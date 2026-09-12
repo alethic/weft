@@ -17,9 +17,9 @@ func obj(kind, name string, labels map[string]any) map[string]any {
 // The ordinary read: a resource that is there arrives whole.
 func TestReadReturnsTheObject(t *testing.T) {
 	res := mustRun(t, `
-def compose(variable, observed):
+def compose(variable):
     rg = read("azure.m.upbound.io/v1beta1", "ResourceGroup", "sweep-env")
-    resource("x", {"apiVersion": "v1", "kind": "ConfigMap",
+    resource({"apiVersion": "v1", "kind": "ConfigMap",
               "metadata": {"name": rg.metadata.name}})
 `, Request{Reader: fakeReader{"sweep-env": obj("ResourceGroup", "sweep-env", nil)}})
 
@@ -36,7 +36,7 @@ def compose(variable, observed):
 // the whole of what a required flag on a declared source used to buy.
 func TestReadOfSomethingAbsentIsFalsey(t *testing.T) {
 	res := mustRun(t, `
-def compose(variable, observed):
+def compose(variable):
     if not read("v1", "ConfigMap", "licence"):
         return wait("no licence ConfigMap in this namespace yet")
     return
@@ -51,10 +51,10 @@ def compose(variable, observed):
 // configuration.
 func TestConditionalGateOverARead(t *testing.T) {
 	program := `
-def compose(variable, observed):
+def compose(variable):
     if variable.useSql and not read("v1", "ConfigMap", "database"):
         return wait("SQL is enabled but the database is not there yet")
-    resource("cfg", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"}})
+    resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"}})
 `
 	res := mustRun(t, program, Request{
 		Variables: map[string]any{"useSql": true},
@@ -77,9 +77,9 @@ def compose(variable, observed):
 // whole purpose is tolerating what is not there yet.
 func TestGetAndHasTolerateAnAbsentRead(t *testing.T) {
 	res := mustRun(t, `
-def compose(variable, observed):
+def compose(variable):
     missing = read("v1", "ConfigMap", "nope")
-    resource("x", {"apiVersion": "v1", "kind": "ConfigMap",
+    resource({"apiVersion": "v1", "kind": "ConfigMap",
               "metadata": {"name": "x"},
               "data": {"got": get(missing, "data.key", "fallback"),
                        "has": str(has(missing, "data.key"))}})
@@ -98,8 +98,8 @@ def compose(variable, observed):
 // is the only place a misspelled name gets caught.
 func TestAbsentReadNamesItselfOnFieldAccess(t *testing.T) {
 	_, err := run(t, `
-def compose(variable, observed):
-    resource("x", read("v1", "MSSQLDatabase", "tpyo").status.atProvider.id)
+def compose(variable):
+    resource(read("v1", "MSSQLDatabase", "tpyo").status.atProvider.id)
 `, Request{Reader: fakeReader{}})
 
 	pe := programError(t, err)
@@ -113,8 +113,8 @@ def compose(variable, observed):
 func TestReadFailurePropagatesTheCallerError(t *testing.T) {
 	boom := errors.New("configmaps is forbidden: User cannot get resource")
 	_, err := run(t, `
-def compose(variable, observed):
-    resource("x", read("v1", "ConfigMap", "denied"))
+def compose(variable):
+    resource(read("v1", "ConfigMap", "denied"))
 `, Request{Reader: fakeReader{"denied": boom}})
 
 	if !errors.Is(err, boom) {
@@ -128,8 +128,8 @@ def compose(variable, observed):
 
 func TestReadWithoutAReaderIsRefused(t *testing.T) {
 	_, err := run(t, `
-def compose(variable, observed):
-    resource("x", read("v1", "ConfigMap", "any"))
+def compose(variable):
+    resource(read("v1", "ConfigMap", "any"))
 `, Request{})
 
 	pe := programError(t, err)
@@ -142,10 +142,10 @@ def compose(variable, observed):
 // selection cannot reorder its own output between passes.
 func TestSelectReturnsMatchesSortedByName(t *testing.T) {
 	res := mustRun(t, `
-def compose(variable, observed):
+def compose(variable):
     tenants = select("v1", "ConfigMap", labels={"role": "tenant"})
     for i in range(len(tenants)):
-        resource("t" + str(i), {"apiVersion": "v1", "kind": "ConfigMap",
+        resource({"apiVersion": "v1", "kind": "ConfigMap",
                              "metadata": {"name": tenants[i].metadata.name}})
     return
 `, Request{Reader: fakeReader{
@@ -168,9 +168,9 @@ def compose(variable, observed):
 
 func TestSelectWithNoLabelsMatchesEverythingOfThatKind(t *testing.T) {
 	res := mustRun(t, `
-def compose(variable, observed):
+def compose(variable):
     all = select("v1", "ConfigMap")
-    resource("x", {"apiVersion": "v1", "kind": "ConfigMap",
+    resource({"apiVersion": "v1", "kind": "ConfigMap",
               "metadata": {"name": "x"}, "data": {"n": str(len(all))}})
 `, Request{Reader: fakeReader{
 		"a": obj("ConfigMap", "a", nil),
@@ -186,7 +186,7 @@ def compose(variable, observed):
 // read is also a watch the controller keeps alive afterwards.
 func TestReadBudget(t *testing.T) {
 	_, err := run(t, `
-def compose(variable, observed):
+def compose(variable):
     for i in range(10):
         read("v1", "ConfigMap", "cm-" + str(i))
     return
@@ -202,7 +202,7 @@ def compose(variable, observed):
 // for the same thing in several branches is not punished for it.
 func TestRepeatedReadsCountOnce(t *testing.T) {
 	_, err := run(t, `
-def compose(variable, observed):
+def compose(variable):
     for i in range(50):
         read("v1", "ConfigMap", "same")
     return
@@ -219,7 +219,7 @@ func TestSelectSizeLimit(t *testing.T) {
 		many[n] = obj("ConfigMap", n, nil)
 	}
 	_, err := run(t, `
-def compose(variable, observed):
+def compose(variable):
     select("v1", "ConfigMap")
     return
 `, Request{Reader: many}, func(o *Options) { o.MaxSelected = 2 })

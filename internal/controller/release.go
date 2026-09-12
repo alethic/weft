@@ -47,9 +47,9 @@ func (r *WeaveReconciler) releaseAll(ctx context.Context, c *kube.Client, weave 
 			}
 			var perm *kube.PermissionError
 			if errors.As(err, &perm) {
-				return degradedf(ReasonForbidden, "releasing %q:\n%s", e.Key, perm.Error())
+				return degradedf(ReasonForbidden, "releasing %s %q:\n%s", e.Kind, e.Name, perm.Error())
 			}
-			return fmt.Errorf("reading %q before releasing it: %w", e.Key, err)
+			return fmt.Errorf("reading %s %q before releasing it: %w", e.Kind, e.Name, err)
 		}
 
 		// Usually there is nothing on the object to undo: it never carried our
@@ -61,15 +61,15 @@ func (r *WeaveReconciler) releaseAll(ctx context.Context, c *kube.Client, weave 
 				var perm *kube.PermissionError
 				if errors.As(err, &perm) {
 					return degradedf(ReasonForbidden,
-						"releasing %q needs permission to update it:\n%s", e.Key, perm.Error())
+						"releasing %s %q needs permission to update it:\n%s", e.Kind, e.Name, perm.Error())
 				}
 				if !apierrors.IsNotFound(err) {
-					return fmt.Errorf("releasing %q (%s %q): %w", e.Key, e.Kind, e.Name, err)
+					return fmt.Errorf("releasing %s %q: %w", e.Kind, e.Name, err)
 				}
 			}
 		}
 
-		log.Info("released an unowned resource", "key", e.Key, "kind", e.Kind, "name", e.Name)
+		log.Info("released an unowned resource", "kind", e.Kind, "name", e.Name)
 		r.eventf(weave, "Normal", "Released",
 			"let go of %s %q, which was applied %s=false. It is no longer tracked by this Weave and "+
 				"will not be deleted with it.",

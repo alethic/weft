@@ -32,7 +32,7 @@ spec:
 
 
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         resourceGroup = read("azure.m.upbound.io/v1beta1", "ResourceGroup", "sweep-env")
         appIdentity = read("managedidentity.azure.m.upbound.io/v1beta1", "UserAssignedIdentity", "sweep-env-app")
 
@@ -40,7 +40,7 @@ spec:
         admin_name = variable.resourceName + "-sqladmin"
 
         # The identity the SQL server runs its AAD admin as. Nothing before it.
-        resource("sqladmin-identity", {
+        sqladmin_identity = resource({
             "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
             "kind": "UserAssignedIdentity",
             "metadata": {
@@ -60,32 +60,30 @@ spec:
             },
         })
 
-        admin_client_id = get(observed, ["sqladmin-identity", "status", "atProvider", "clientId"])
-        admin_principal = get(observed, ["sqladmin-identity", "status", "atProvider", "principalId"])
+        admin_client_id = get(sqladmin_identity.observed, "status.atProvider.clientId")
+        admin_principal = get(sqladmin_identity.observed, "status.atProvider.principalId")
         if not admin_client_id or not admin_principal:
             pending("clientId and principalId on the SQL admin identity")
             return
 
         # The workload-identity ServiceAccount, and the server itself. Both
         # need the identity and neither needs the other, so they go together.
-        resource("sqladmin-serviceaccount", {
+        resource({
             "apiVersion": "v1",
             "kind": "ServiceAccount",
             "metadata": {
                 "name": variable.prefix + "-sqladmin",
                 "annotations": {
-                    "weft.run/needs": "sqladmin-identity",
                     "azure.workload.identity/client-id": admin_client_id,
                 },
             },
         })
 
-        resource("sqlserver", {
+        sqlserver = resource({
             "apiVersion": "sql.azure.m.upbound.io/v1beta1",
             "kind": "MSSQLServer",
             "metadata": {
                 "name": variable.prefix,
-                "annotations": {"weft.run/needs": "sqladmin-identity"},
             },
             "spec": {
                 "providerConfigRef": variable.providerConfigRef,
@@ -103,7 +101,7 @@ spec:
         })
 
         # Grant each application identity a database user.
-        fqdn = get(observed, ["sqlserver", "status", "atProvider", "fullyQualifiedDomainName"])
+        fqdn = get(sqlserver.observed, "status.atProvider.fullyQualifiedDomainName")
         if not fqdn:
             pending("fullyQualifiedDomainName on the SQL server")
             return
@@ -122,14 +120,11 @@ spec:
                 "GO",
             ]) + "\n"
 
-            resource("sqlcmd-" + user.name, {
+            resource({
                 "apiVersion": "batch/v1",
                 "kind": "Job",
                 "metadata": {
                     "name": variable.prefix + "-sqlcmd-" + user.name + "-" + str(generation),
-                    "annotations": {
-                        "weft.run/needs": "sqlserver,sqlcmd-script-" + user.name,
-                    },
                 },
                 "spec": {
                     "backoffLimit": 4,
@@ -160,12 +155,11 @@ spec:
             # need for, so it exists before the Job mounts it and outlives it
             # on teardown. Saying which ConfigMap is the point: a number could
             # have been wrong in a way nothing would notice.
-            resource("sqlcmd-script-" + user.name, {
+            resource({
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {
                     "name": variable.prefix + "-sqlcmd-" + user.name,
-                    "annotations": {"weft.run/needs": "sqladmin-identity"},
                 },
                 "data": {"grant.sql": script},
             })

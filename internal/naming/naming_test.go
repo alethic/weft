@@ -80,7 +80,6 @@ func TestIdentifiersDeriveFromGroup(t *testing.T) {
 		"WeaveFinalizer":      WeaveFinalizer,
 		"HeldFinalizerPrefix": HeldFinalizerPrefix,
 		"WeaveLabel":          WeaveLabel,
-		"KeyAnnotation":       KeyAnnotation,
 	} {
 		if !strings.Contains(value, Group) {
 			t.Errorf("%s = %q does not derive from Group %q", name, value, Group)
@@ -89,7 +88,7 @@ func TestIdentifiersDeriveFromGroup(t *testing.T) {
 }
 
 func TestLabelAndAnnotationKeysAreValid(t *testing.T) {
-	for _, k := range []string{WeaveLabel, KeyAnnotation, WeaveUIDAnnotation, OwnedAnnotation} {
+	for _, k := range []string{WeaveLabel, WeaveUIDAnnotation, OwnedAnnotation} {
 		if errs := validation.IsQualifiedName(k); len(errs) > 0 {
 			t.Errorf("%q is not a qualified name: %v", k, errs)
 		}

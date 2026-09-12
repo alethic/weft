@@ -30,12 +30,12 @@ spec:
           - westeurope
           - southeastasia
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         for region in variable.regions:
             # needs=[] says this depends on nothing. Without it each region
             # would inherit the one before it and they would be torn down in a
             # chain rather than together.
-            resource("region-" + region, {
+            resource({
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {"name": "region-" + region},

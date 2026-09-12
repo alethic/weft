@@ -35,10 +35,18 @@ func res(name string, extra ...func(map[string]any)) map[string]any {
 	return obj
 }
 
-func evaluated(keys ...string) []eval.Resource {
-	out := make([]eval.Resource, 0, len(keys))
-	for _, k := range keys {
-		out = append(out, eval.Resource{Key: k, Object: res(k)})
+func ref(name string) eval.Ref {
+	return eval.Ref{APIVersion: "v1", Kind: "ConfigMap", Name: name}
+}
+
+func declared(name string) eval.Resource {
+	return eval.Resource{Ref: ref(name), Object: res(name)}
+}
+
+func evaluated(names ...string) []eval.Resource {
+	out := make([]eval.Resource, 0, len(names))
+	for _, n := range names {
+		out = append(out, declared(n))
 	}
 	return out
 }
@@ -54,8 +62,8 @@ func TestBuildAssignsWavesByPosition(t *testing.T) {
 		key  string
 		wave int32
 	}{{"identity", 0}, {"assignment", 1}, {"binding", 2}} {
-		if items[i].Key != want.key || items[i].Wave != want.wave {
-			t.Errorf("item %d = %q wave %d, want %q wave %d", i, items[i].Key, items[i].Wave, want.key, want.wave)
+		if items[i].Ref.Name != want.key || items[i].Wave != want.wave {
+			t.Errorf("item %d = %q wave %d, want %q wave %d", i, items[i].Ref.Name, items[i].Wave, want.key, want.wave)
 		}
 	}
 }
@@ -64,7 +72,7 @@ func TestBuildAssignsWavesByPosition(t *testing.T) {
 // and not each other come out together without anybody deciding that.
 func TestBuildDerivesWavesFromNeeds(t *testing.T) {
 	items, err := Build([]eval.Resource{
-		{Key: "identity", Object: res("identity")},
+		declared("identity"),
 		dependent("ra-a", "identity"),
 		dependent("ra-b", "identity"),
 		dependent("ra-c", "identity"),
@@ -75,8 +83,8 @@ func TestBuildDerivesWavesFromNeeds(t *testing.T) {
 
 	want := map[string]int32{"identity": 0, "ra-a": 1, "ra-b": 1, "ra-c": 1}
 	for _, it := range items {
-		if it.Wave != want[it.Key] {
-			t.Errorf("%s is wave %d, want %d", it.Key, it.Wave, want[it.Key])
+		if it.Wave != want[it.Ref.Name] {
+			t.Errorf("%s is wave %d, want %d", it.Ref.Name, it.Wave, want[it.Ref.Name])
 		}
 	}
 
@@ -93,9 +101,9 @@ func TestBuildDerivesWavesFromNeeds(t *testing.T) {
 // the whole point: it says this one is less constrained than its position.
 func TestNeedsOverridesThePositionalChain(t *testing.T) {
 	items, err := Build([]eval.Resource{
-		{Key: "base", Object: res("base")},
-		{Key: "long", Object: res("long")},
-		{Key: "winded", Object: res("winded")},
+		declared("base"),
+		declared("long"),
+		declared("winded"),
 		dependent("quick", "base"),
 	}, "ns", owner())
 	if err != nil {
@@ -104,7 +112,7 @@ func TestNeedsOverridesThePositionalChain(t *testing.T) {
 
 	byKey := map[string]int32{}
 	for _, it := range items {
-		byKey[it.Key] = it.Wave
+		byKey[it.Ref.Name] = it.Wave
 	}
 	if byKey["winded"] != 2 {
 		t.Errorf("the chain should still apply to what says nothing: %d", byKey["winded"])
@@ -127,7 +135,7 @@ func TestDeclaringNoNeedsBreaksTheChain(t *testing.T) {
 	}
 	for _, it := range items {
 		if it.Wave != 0 {
-			t.Errorf("%s is wave %d, want them all together at 0", it.Key, it.Wave)
+			t.Errorf("%s is wave %d, want them all together at 0", it.Ref.Name, it.Wave)
 		}
 	}
 }
@@ -136,7 +144,7 @@ func TestDeclaringNoNeedsBreaksTheChain(t *testing.T) {
 // it is the thing a wave number could never do.
 func TestBuildRejectsAnUnknownDependency(t *testing.T) {
 	_, err := Build([]eval.Resource{
-		{Key: "a", Object: res("a")},
+		declared("a"),
 		dependent("b", "idenity"),
 	}, "ns", owner())
 
@@ -161,8 +169,12 @@ func TestBuildRejectsADependencyCycle(t *testing.T) {
 
 // dependent builds an evaluated resource that declares what it depends on, the
 // way the evaluator hands one over once a program has wrapped it in resource().
-func dependent(key string, deps ...string) eval.Resource {
-	return eval.Resource{Key: key, Object: res(key), Needs: deps, NeedsDeclared: true}
+func dependent(name string, deps ...string) eval.Resource {
+	refs := make([]eval.Ref, 0, len(deps))
+	for _, d := range deps {
+		refs = append(refs, ref(d))
+	}
+	return eval.Resource{Ref: ref(name), Object: res(name), Needs: refs, NeedsDeclared: true}
 }
 
 func entriesOf(items []Item) []v1alpha1.InventoryEntry {
@@ -199,7 +211,7 @@ func TestBuildOwnsAndLabels(t *testing.T) {
 	if obj.GetLabels()[naming.WeaveLabel] != "app" {
 		t.Errorf("labels = %v", obj.GetLabels())
 	}
-	if obj.GetAnnotations()[naming.KeyAnnotation] != "cfg" {
+	if obj.GetAnnotations()[naming.WeaveUIDAnnotation] != "weave-uid" {
 		t.Errorf("annotations = %v", obj.GetAnnotations())
 	}
 }
@@ -208,7 +220,7 @@ func TestBuildOwnsAndLabels(t *testing.T) {
 // output that reaches outside is rejected rather than relocated.
 func TestBuildRejectsForeignNamespace(t *testing.T) {
 	_, err := Build([]eval.Resource{
-		{Key: "cfg", Object: res("cfg", func(obj map[string]any) {
+		{Ref: ref("cfg"), Object: res("cfg", func(obj map[string]any) {
 			obj["metadata"].(map[string]any)["namespace"] = "someone-else"
 		})},
 	}, "sweep-labs", owner())
@@ -220,7 +232,7 @@ func TestBuildRejectsForeignNamespace(t *testing.T) {
 
 func TestBuildRejectsHandWrittenOwnerReferences(t *testing.T) {
 	_, err := Build([]eval.Resource{
-		{Key: "cfg", Object: res("cfg", func(obj map[string]any) {
+		{Ref: ref("cfg"), Object: res("cfg", func(obj map[string]any) {
 			obj["metadata"].(map[string]any)["ownerReferences"] = []any{
 				map[string]any{"apiVersion": "v1", "kind": "ConfigMap", "name": "exec", "uid": "abc"},
 			}
@@ -236,7 +248,7 @@ func TestBuildRejectsHandWrittenOwnerReferences(t *testing.T) {
 // drags along server-populated metadata that must not be applied.
 func TestBuildStripsDerivedMetadata(t *testing.T) {
 	items, err := Build([]eval.Resource{
-		{Key: "cfg", Object: res("cfg", func(obj map[string]any) {
+		{Ref: ref("cfg"), Object: res("cfg", func(obj map[string]any) {
 			md := obj["metadata"].(map[string]any)
 			md["uid"] = "someone-elses-uid"
 			md["resourceVersion"] = "12345"
@@ -262,9 +274,9 @@ func TestBuildStripsDerivedMetadata(t *testing.T) {
 	}
 }
 
-func inventoryEntry(key string, wave int32, missing int32) v1alpha1.InventoryEntry {
+func inventoryEntry(name string, wave int32, missing int32) v1alpha1.InventoryEntry {
 	return v1alpha1.InventoryEntry{
-		Key: key, APIVersion: "v1", Kind: "ConfigMap", Name: key,
+		APIVersion: "v1", Kind: "ConfigMap", Name: name,
 		Wave: wave, MissingCount: missing, Owned: true,
 	}
 }
@@ -312,7 +324,7 @@ func TestComputeHysteresis(t *testing.T) {
 	// Once the delay has elapsed, it goes.
 	d = Compute([]v1alpha1.InventoryEntry{next, inventoryEntry("kept", 0, 0)}, desired, 3, testDelay,
 		t0.Add(testDelay+time.Second))
-	if len(d.Prune) != 1 || d.Prune[0].Key != "gone" {
+	if len(d.Prune) != 1 || d.Prune[0].Name != "gone" {
 		t.Fatalf("should prune once the delay has elapsed, got %v", d.Prune)
 	}
 	if len(d.Retained) != 0 {
@@ -393,11 +405,11 @@ func TestWavesAreDescendingForTeardown(t *testing.T) {
 	if groups[0][0].Wave != 2 || len(groups[0]) != 2 {
 		t.Errorf("first group should be the two wave-2 entries, got %+v", groups[0])
 	}
-	if groups[2][0].Key != "identity" {
+	if groups[2][0].Name != "identity" {
 		t.Errorf("last group should be the identity, got %+v", groups[2])
 	}
 	// Deterministic ordering inside a wave keeps status churn down.
-	if groups[0][0].Key != "ra-a" || groups[0][1].Key != "ra-b" {
+	if groups[0][0].Name != "ra-a" || groups[0][1].Name != "ra-b" {
 		t.Errorf("wave contents should be sorted by key, got %+v", groups[0])
 	}
 }
@@ -411,7 +423,7 @@ func TestApplyWavesAreAscending(t *testing.T) {
 	if len(groups) != 3 {
 		t.Fatalf("got %d groups, want 3", len(groups))
 	}
-	if groups[0][0].Key != "a" || groups[2][0].Key != "c" {
+	if groups[0][0].Ref.Name != "a" || groups[2][0].Ref.Name != "c" {
 		t.Errorf("apply order is wrong: %v", groups)
 	}
 }
@@ -423,8 +435,8 @@ func TestMergeIsStable(t *testing.T) {
 	)
 	want := []string{"a", "z", "b"}
 	for i, w := range want {
-		if out[i].Key != w {
-			t.Errorf("position %d = %q, want %q", i, out[i].Key, w)
+		if out[i].Name != w {
+			t.Errorf("position %d = %q, want %q", i, out[i].Name, w)
 		}
 	}
 }
@@ -440,7 +452,7 @@ func TestGroupVersionKind(t *testing.T) {
 		t.Errorf("gvk = %v", gvk)
 	}
 
-	if _, err := GroupVersionKind(v1alpha1.InventoryEntry{Key: "x", APIVersion: "a/b/c"}); err == nil {
+	if _, err := GroupVersionKind(v1alpha1.InventoryEntry{Name: "x", APIVersion: "a/b/c"}); err == nil {
 		t.Error("an unparseable apiVersion should be an error")
 	}
 }
@@ -497,120 +509,48 @@ func TestMissingCountStopsAtTheThreshold(t *testing.T) {
 	}
 }
 
-// A key is the identity of an entry; what it addresses is a separate thing.
-// Editing a program to change a name or a kind under a key it still returns
-// leaves the old object behind, and the inventory records the new one in its
-// place - so nothing would ever look at the old one again. That is the orphan
-// the cron-and-template arrangement produced, and the reason it needed manual
-// reclaiming.
-func TestComputeDetectsReplacedObjects(t *testing.T) {
+// A rename is one object no longer declared and another declared in its place.
+// There is no slot for it to happen inside: the old one is pruned like anything
+// that stopped being described, and the new one is created.
+func TestRenamingIsAPruneAndACreate(t *testing.T) {
+	t0 := time.Now()
 	current := []v1alpha1.InventoryEntry{{
-		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing-one", Wave: 0, Owned: true,
+		APIVersion: "v1", Kind: "ConfigMap", Name: "thing-one", Wave: 0, Owned: true,
+		MissingCount: 3, MissingSince: timePtr(t0.Add(-time.Hour)),
 	}}
 
-	// Same key, different name.
-	renamed, err := Build([]eval.Resource{
-		{Key: "thing", Object: res("thing-two")},
-	}, "ns", owner())
+	renamed, err := Build([]eval.Resource{declared("thing-two")}, "ns", owner())
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	d := Compute(current, renamed, 3, testDelay, time.Now())
-	if len(d.Replaced) != 1 || d.Replaced[0].Name != "thing-one" {
-		t.Fatalf("the old object should be marked for removal, got %+v", d.Replaced)
+	d := Compute(current, renamed, 3, testDelay, t0)
+	if len(d.Apply) != 1 || d.Apply[0].Ref.Name != "thing-two" {
+		t.Fatalf("the new object should be applied: %+v", d.Apply)
 	}
-	if len(d.Prune) != 0 || len(d.Retained) != 0 {
-		t.Error("a replacement is not an absence, so no hysteresis applies")
-	}
-}
-
-func TestComputeDetectsChangedKind(t *testing.T) {
-	current := []v1alpha1.InventoryEntry{{
-		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0, Owned: true,
-	}}
-
-	asSecret := map[string]any{
-		"apiVersion": "v1",
-		"kind":       "Secret",
-		"metadata":   map[string]any{"name": "thing"},
-	}
-	desired, err := Build([]eval.Resource{{Key: "thing", Object: asSecret}}, "ns", owner())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	d := Compute(current, desired, 3, testDelay, time.Now())
-	if len(d.Replaced) != 1 || d.Replaced[0].Kind != "ConfigMap" {
-		t.Fatalf("changing the kind under a key must remove the old object, got %+v", d.Replaced)
+	if len(d.Prune) != 1 || d.Prune[0].Name != "thing-one" {
+		t.Fatalf("the old object should be pruned: %+v", d.Prune)
 	}
 }
 
-// The opposite mistake: an object that moved to a different key has not gone
-// anywhere. Pruning it would destroy something the program still asks for, and
-// the apply under the new key would then have to recreate it.
-func TestComputeDoesNotPruneARekeyedObject(t *testing.T) {
-	current := []v1alpha1.InventoryEntry{{
-		Key: "old-key", APIVersion: "v1", Kind: "ConfigMap", Name: "shared", Wave: 0,
-	}}
-
-	desired, err := Build([]eval.Resource{
-		{Key: "new-key", Object: res("shared")},
-	}, "ns", owner())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	d := Compute(current, desired, 1, 0, time.Now())
-	if len(d.Prune) != 0 {
-		t.Errorf("the object is still wanted, under another key; deleting it would destroy live state: %+v", d.Prune)
-	}
-	if len(d.Replaced) != 0 {
-		t.Errorf("nothing was replaced: %+v", d.Replaced)
-	}
-}
-
-// An unchanged key addressing an unchanged object is neither replaced nor
-// pruned, or a steady state would churn.
+// Unchanged entries are left exactly alone, which is what keeps a settled Weave
+// from writing its own status on every pass.
 func TestComputeIgnoresUnchangedEntries(t *testing.T) {
 	current := []v1alpha1.InventoryEntry{{
-		Key: "thing", APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0, Owned: true,
+		APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0, Owned: true,
 	}}
-	desired, err := Build([]eval.Resource{{Key: "thing", Object: res("thing")}}, "ns", owner())
+	desired, err := Build([]eval.Resource{declared("thing")}, "ns", owner())
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	d := Compute(current, desired, 3, testDelay, time.Now())
-	if len(d.Replaced) != 0 || len(d.Prune) != 0 || len(d.Retained) != 0 {
+	if len(d.Prune) != 0 || len(d.Retained) != 0 || len(d.Released) != 0 {
 		t.Errorf("nothing should have moved: %+v", d)
 	}
 }
 
-// Replacements come out highest wave first, so several of them are removed in
-// the same reverse order everything else is.
-func TestReplacedIsOrdered(t *testing.T) {
-	current := []v1alpha1.InventoryEntry{
-		{Key: "a", APIVersion: "v1", Kind: "ConfigMap", Name: "a-old", Wave: 0, Owned: true},
-		{Key: "b", APIVersion: "v1", Kind: "ConfigMap", Name: "b-old", Wave: 1, Owned: true},
-		{Key: "c", APIVersion: "v1", Kind: "ConfigMap", Name: "c-old", Wave: 2, Owned: true},
-	}
-	desired, err := Build([]eval.Resource{
-		{Key: "a", Object: res("a-new")},
-		{Key: "b", Object: res("b-new")},
-		{Key: "c", Object: res("c-new")},
-	}, "ns", owner())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	d := Compute(current, desired, 3, testDelay, time.Now())
-	if len(d.Replaced) != 3 {
-		t.Fatalf("got %d replacements", len(d.Replaced))
-	}
-	for i, want := range []string{"c-old", "b-old", "a-old"} {
-		if d.Replaced[i].Name != want {
-			t.Errorf("position %d = %q, want %q", i, d.Replaced[i].Name, want)
-		}
-	}
+func timePtr(t time.Time) *metav1.Time {
+	mt := metav1.NewTime(t)
+	return &mt
 }

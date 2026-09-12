@@ -25,7 +25,7 @@ spec:
             return 0
         return countdown(n - 1)
 
-    def compose(variable, observed):
+    def compose(variable):
 
         platform = read("v1", "ConfigMap", "platform")
         countdown(10)
@@ -43,7 +43,7 @@ spec:
   program: |
     load("helpers.star", "helper")
 
-    def compose(variable, observed):
+    def compose(variable):
         return
 ---
 # Runtime bounding is what replaces the apply-time type checking a
@@ -56,7 +56,7 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, observed):
+    def compose(variable):
         total = 0
         for i in range(100000000):
             total += i
@@ -72,8 +72,8 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, observed):
-        resource("escapee", {
+    def compose(variable):
+        resource({
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": "escapee", "namespace": "kube-system"},
@@ -89,8 +89,8 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, observed):
-        resource("ns", {
+    def compose(variable):
+        resource({
             "apiVersion": "v1",
             "kind": "Namespace",
             "metadata": {"name": "weft-should-not-create-this"},
@@ -106,8 +106,8 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, observed):
-        resource("adopted", {
+    def compose(variable):
+        resource({
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {
@@ -121,27 +121,6 @@ spec:
             },
             })
 ---
-# A dependency naming a key the program does not return is a typo, and the whole
-# reason ordering is expressed as names rather than numbers: a wave number could
-# be wrong in a way nothing could ever detect.
-apiVersion: weft.run/v1alpha1
-kind: Weave
-metadata:
-  name: bound-unknown-need
-  namespace: weft-demo
-spec:
-  serviceAccountName: composer
-  program: |
-    def compose(variable, observed):
-        resource("identity", {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "a"},
-            })
-        resource("assignment", {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "b", "annotations": {"weft.run/needs": "idenity"}},
-            })
----
 # A cycle is reported rather than broken. Breaking one silently would produce an
 # apply order that looks fine and is not, and the program has said something
 # impossible - which edge is wrong is not ours to guess.
@@ -153,15 +132,27 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, observed):
-        resource("a", {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "a", "annotations": {"weft.run/needs": "b"}},
-            })
-        resource("b", {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "b", "annotations": {"weft.run/needs": "a"}},
-            })
+    def compose(variable):
+        a = resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}})
+        b = resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "b"}},
+                     needs=[a])
+        # Starlark has no forward references, so a cycle takes a mutation to
+        # build - which is itself a sign of how hard the shape makes it.
+        resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"}},
+                 needs=[b])
+---
+# Declaring one object twice cannot mean two objects.
+apiVersion: weft.run/v1alpha1
+kind: Weave
+metadata:
+  name: bound-declared-twice
+  namespace: weft-demo
+spec:
+  serviceAccountName: composer
+  program: |
+    def compose(variable):
+        resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "same"}})
+        resource({"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "same"}})
 ---
 # A typo must not quietly become None. That would render a resource with a blank
 # field which applies cleanly, and is a far worse failure than a backtrace - the
@@ -174,8 +165,8 @@ metadata:
 spec:
   serviceAccountName: composer
   program: |
-    def compose(variable, observed):
-        resource("cfg", {
+    def compose(variable):
+        resource({
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": "cfg"},

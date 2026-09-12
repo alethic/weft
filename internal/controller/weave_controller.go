@@ -380,32 +380,11 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 
 	applied, applyErr := r.applyAll(ctx, c, weave, diff.Apply)
 
-	// An object whose key still exists but which has been replaced joins
-	// whatever was already waiting to be deleted. It cannot stay in the
-	// inventory: the key it used to occupy now records its replacement.
-	superseded := concat(weave.Status.Superseded, diff.Replaced)
-
 	// Record what was applied before reporting any failure, so that a resource
 	// created just before an error is not left off the inventory and orphaned.
 	weave.Status.Inventory = inventory.Merge(applied, concat(diff.Retained, diff.Prune))
-	weave.Status.Superseded = superseded
 	if applyErr != nil {
 		return pass{}, applyErr
-	}
-
-	// Replaced objects go first. Their replacements have already been applied,
-	// so nothing the program still describes depends on them.
-	if len(superseded) > 0 {
-		remaining, err := r.deleteWaves(ctx, c, weave, superseded)
-		if err != nil {
-			return pass{}, err
-		}
-		weave.Status.Superseded = remaining
-		if len(remaining) > 0 {
-			return pass{}, waitingf(ReasonTearingDown,
-				"removing %s, which the program replaced", describeEntries(remaining, 5))
-		}
-		r.eventf(weave, "Normal", "Replaced", "removed %d resources the program replaced", len(superseded))
 	}
 
 	// Anything applied unowned is let go before anything is deleted. It is not

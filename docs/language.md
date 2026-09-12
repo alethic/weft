@@ -6,7 +6,7 @@ deterministic dialect of Python — in-process, once per reconcile.
 ## The contract
 
 ```python
-def compose(variable, observed):
+def compose(variable):
     return {"key": {...resource...}, ...}
 ```
 
@@ -470,7 +470,7 @@ rather than taken over, unless the object itself carries
 Two phases and a fan-out, which between them cover most of what compositions do:
 
 ```python
-def compose(variable, observed):
+def compose(variable):
     out = {}
 
     rg = read("azure.m.upbound.io/v1beta1", "ResourceGroup", variable.resourceGroupName)
