@@ -12,22 +12,20 @@ import (
 
 const unownedProgram = `
 def compose(variable, observed):
-    out = {
-        "ordinary": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "ordinary"},
-        },
-    }
+    resource("ordinary", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "ordinary"},
+    })
     if not variable.get("dropped", False):
-        out["keeper"] = {
+        resource("keeper", {
             "apiVersion": "v1", "kind": "ConfigMap",
             "metadata": {
                 "name": "keeper",
                 "annotations": {"weft.run/owned": "false"},
             },
             "data": {"kept": "yes"},
-        }
-    return out
+        })
+    return
 `
 
 // An unowned resource is applied like any other, but with no owner reference on
@@ -151,12 +149,10 @@ func TestOwnedAnnotationRejectsAnythingElse(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("typo", `
 def compose(variable, observed):
-    return {
-        "x": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "x", "annotations": {"weft.run/owned": "no"}},
-        },
-    }
+    resource("x", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "x", "annotations": {"weft.run/owned": "no"}},
+        })
 `, "")
 	h.settle("typo", 2)
 

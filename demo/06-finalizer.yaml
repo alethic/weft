@@ -28,11 +28,9 @@ spec:
   program: |
     def compose(variable, observed):
         upstream = read("v1", "ConfigMap", "upstream", hold=True)
-        return {
-            "derived": {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {"name": "derived-from-upstream"},
-                "data": {"upstreamId": require(upstream, "data.id")},
-            },
-        }
+        resource("derived", {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "derived-from-upstream"},
+            "data": {"upstreamId": require(upstream, "data.id")},
+            })

@@ -54,11 +54,9 @@ annotations:
         program: |
           def compose(variable, observed):
               tenant = read("v1", "ConfigMap", "tenant")
-              return {
-                  "settings": {
-                      "apiVersion": "v1",
-                      "kind": "ConfigMap",
-                      "metadata": {"name": "settings"},
-                      "data": {"tenantId": require(tenant, "data.tenantId")},
-                  },
-              }
+              resource("settings", {
+                  "apiVersion": "v1",
+                  "kind": "ConfigMap",
+                  "metadata": {"name": "settings"},
+                  "data": {"tenantId": require(tenant, "data.tenantId")},
+                  })

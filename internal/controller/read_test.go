@@ -18,13 +18,11 @@ func TestReadResolvesThroughImpersonation(t *testing.T) {
 	h.create("reader", `
 def compose(variable, observed):
     tenant = read("v1", "ConfigMap", "tenant")
-    return {
-        "greeting": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "greeting"},
-            "data": {"tenant": require(tenant, "data.tenantId")},
-        },
-    }
+    resource("greeting", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "greeting"},
+        "data": {"tenant": require(tenant, "data.tenantId")},
+        })
 `, "")
 	h.settle("reader", 2)
 
@@ -46,7 +44,7 @@ func TestReadsAreRecordedOnStatus(t *testing.T) {
 	h.create("recorder", `
 def compose(variable, observed):
     read("v1", "ConfigMap", "tenant")
-    return {}
+    return
 `, "")
 	h.settle("recorder", 2)
 
@@ -65,13 +63,11 @@ func TestAChangeToSomethingReadWakesTheWeave(t *testing.T) {
 	h.create("reactive", `
 def compose(variable, observed):
     settings = read("v1", "ConfigMap", "settings")
-    return {
-        "echo": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "echo"},
-            "data": {"mode": require(settings, "data.mode")},
-        },
-    }
+    resource("echo", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "echo"},
+        "data": {"mode": require(settings, "data.mode")},
+        })
 `, "")
 	h.settle("reactive", 2)
 
@@ -105,12 +101,10 @@ func TestAbsentReadGatesInTheProgram(t *testing.T) {
 def compose(variable, observed):
     if not read("v1", "ConfigMap", "licence"):
         return wait("no licence ConfigMap in this namespace yet")
-    return {
-        "greeting": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "greeting"},
-        },
-    }
+    resource("greeting", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "greeting"},
+        })
 `, "")
 	h.settle("gated", 2)
 
@@ -148,7 +142,7 @@ func TestReadIsDeniedWithoutPermission(t *testing.T) {
 			ServiceAccountName: "powerless",
 			Program: `
 def compose(variable, observed):
-    return {"x": read("v1", "ConfigMap", "classified")}
+    resource("x", read("v1", "ConfigMap", "classified"))
 `,
 		},
 	}
@@ -187,13 +181,11 @@ func TestSelectMatchesByLabel(t *testing.T) {
 	h.create("selector", `
 def compose(variable, observed):
     found = select("v1", "ConfigMap", labels={"role": "tenant"})
-    return {
-        "list": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "list"},
-            "data": {"names": ",".join([c.metadata.name for c in found])},
-        },
-    }
+    resource("list", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "list"},
+        "data": {"names": ",".join([c.metadata.name for c in found])},
+        })
 `, "")
 	h.settle("selector", 2)
 
@@ -217,12 +209,10 @@ def compose(variable, observed):
     up = read("v1", "ConfigMap", "upstream", hold=True)
     if not up:
         return wait("no upstream yet")
-    return {
-        "derived": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "derived"},
-        },
-    }
+    resource("derived", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "derived"},
+        })
 `, "")
 	h.settle("holder", 2)
 
@@ -250,7 +240,7 @@ func TestHoldIsReleasedWhenTheProgramStopsAskingForIt(t *testing.T) {
 	h.create("relaxing", `
 def compose(variable, observed):
     read("v1", "ConfigMap", "upstream", hold=True)
-    return {}
+    return
 `, "")
 	h.settle("relaxing", 2)
 	if len(h.weave("relaxing").Status.Held) != 1 {
@@ -261,7 +251,7 @@ def compose(variable, observed):
 	w.Spec.Program = `
 def compose(variable, observed):
     read("v1", "ConfigMap", "upstream")
-    return {}
+    return
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
 		t.Fatal(err)

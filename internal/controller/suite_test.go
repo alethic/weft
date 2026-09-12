@@ -291,14 +291,12 @@ func TestReconcileAppliesAndOwns(t *testing.T) {
 
 	h.create("app", `
 def compose(variable, observed):
-    return {
-        "settings": {
-            "apiVersion": "v1",
-            "kind": "ConfigMap",
-            "metadata": {"name": "settings"},
-            "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
-        },
-    }
+    resource("settings", {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "settings"},
+        "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
+        })
 `, "")
 
 	h.settle("app", 2)
@@ -335,13 +333,11 @@ func TestSteadyStateDoesNotChurn(t *testing.T) {
 
 	h.create("app", `
 def compose(variable, observed):
-    return {
-        "settings": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "settings"},
-            "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
-        },
-    }
+    resource("settings", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "settings"},
+        "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
+        })
 `, "")
 
 	h.settle("app", 3)
@@ -366,22 +362,21 @@ func TestStagingThroughObserved(t *testing.T) {
 
 	h.create("app", `
 def compose(variable, observed):
-    out = {}
-    out["identity"] = {
+    resource("identity", {
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "identity"},
         "data": {"tenantId": require(read("v1", "ConfigMap", "tenant"), "data.tenantId")},
-    }
+    })
     uid = get(observed, ["identity", "metadata", "uid"])
     if not uid:
         pending("the identity has no uid yet")
-        return out
-    out["consumer"] = {
+        return
+    resource("consumer", {
         "apiVersion": "v1", "kind": "ConfigMap",
         "metadata": {"name": "consumer"},
         "data": {"principalId": uid},
-    }
-    return out
+    })
+    return
 `, "")
 
 	// First pass: only the identity, and the Weave says why it is not finished.
@@ -425,9 +420,7 @@ func TestSourceGateWithoutBeingRead(t *testing.T) {
 def compose(variable, observed):
     if not read("v1", "ConfigMap", "gate"):
         return wait("the gate ConfigMap has not been created yet")
-    return {
-        "out": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}},
-    }
+    resource("out", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}})
 `, "")
 
 	h.reconcile("gated")
@@ -468,10 +461,10 @@ func TestPruneWaitsOutTheDelay(t *testing.T) {
 
 	program := `
 def compose(variable, observed):
-    out = {"keep": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}}}
+    resource("keep", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}})
     if has(read("v1", "ConfigMap", "tenant"), "data.extra"):
-        out["extra"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}}
-    return out
+        resource("extra", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}})
+    return
 `
 	h.create("pruner", program, "")
 	h.settle("pruner", 2)
@@ -543,10 +536,10 @@ func TestReappearanceCancelsThePrune(t *testing.T) {
 
 	program := `
 def compose(variable, observed):
-    out = {"keep": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}}}
+    resource("keep", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "keep"}})
     if has(read("v1", "ConfigMap", "tenant"), "data.extra"):
-        out["extra"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}}
-    return out
+        resource("extra", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "extra"}})
+    return
 `
 	h.create("flapper", program, "")
 	h.settle("flapper", 2)
@@ -589,13 +582,12 @@ func TestOrderedTeardown(t *testing.T) {
 
 	h.create("stack", `
 def compose(variable, observed):
-    out = {}
     for i, name in enumerate(["base", "middle", "top"]):
-        out[name] = {
+        resource(name, {
             "apiVersion": "v1", "kind": "ConfigMap",
             "metadata": {"name": name},
-        }
-    return out
+        })
+    return
 `, "")
 	h.settle("stack", 2)
 
@@ -691,12 +683,10 @@ func TestCrossNamespaceOutputIsRefused(t *testing.T) {
 
 	h.create("escapee", `
 def compose(variable, observed):
-    return {
-        "out": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "out", "namespace": "somewhere-else"},
-        },
-    }
+    resource("out", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "out", "namespace": "somewhere-else"},
+        })
 `, "")
 
 	h.reconcile("escapee")
@@ -716,7 +706,7 @@ func TestDeletedOutputIsRecreated(t *testing.T) {
 
 	h.create("healer", `
 def compose(variable, observed):
-    return {"out": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}}}
+    resource("out", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "out"}})
 `, "")
 	h.settle("healer", 2)
 
@@ -752,10 +742,8 @@ func TestEditingTheProgramConverges(t *testing.T) {
 
 	h.create("editable", `
 def compose(variable, observed):
-    return {
-        "a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}},
-        "b": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "b"}},
-    }
+    resource("a", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}})
+    resource("b", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "b"}})
 `, "")
 	h.settle("editable", 2)
 
@@ -766,7 +754,7 @@ def compose(variable, observed):
 	w := h.weave("editable")
 	w.Spec.Program = `
 def compose(variable, observed):
-    return {"a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}}}
+    resource("a", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}})
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
 		t.Fatal(err)
@@ -794,14 +782,14 @@ func TestRenamingAKeyReplacesTheResource(t *testing.T) {
 
 	h.create("renamer", `
 def compose(variable, observed):
-    return {"old": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "old-name"}}}
+    resource("old", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "old-name"}})
 `, "")
 	h.settle("renamer", 2)
 
 	w := h.weave("renamer")
 	w.Spec.Program = `
 def compose(variable, observed):
-    return {"new": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "new-name"}}}
+    resource("new", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "new-name"}})
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
 		t.Fatal(err)
@@ -828,7 +816,7 @@ func TestFinalizerIsAddedFirst(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("finalized", `
 def compose(variable, observed):
-    return {}
+    return
 `, "")
 
 	h.reconcile("finalized")
@@ -853,13 +841,11 @@ func TestVariablesKeepTheirTypes(t *testing.T) {
 
 	h.create("typed", `
 def compose(variable, observed):
-    return {
-        "out": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "out"},
-            "data": {"replicas": str(variable.replicas), "doubled": str(variable.replicas * 2)},
-        },
-    }
+    resource("out", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "out"},
+        "data": {"replicas": str(variable.replicas), "doubled": str(variable.replicas * 2)},
+        })
 `, `{"replicas": 3}`)
 
 	h.settle("typed", 2)

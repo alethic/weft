@@ -31,17 +31,14 @@ spec:
           - southeastasia
   program: |
     def compose(variable, observed):
-        out = {}
         for region in variable.regions:
-            out["region-" + region] = {
+            # needs=[] says this depends on nothing. Without it each region
+            # would inherit the one before it and they would be torn down in a
+            # chain rather than together.
+            resource("region-" + region, {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
-                "metadata": {
-                    "name": "region-" + region,
-                    # None of these depends on another, so saying they need
-                    # nothing puts them at one depth instead of in a chain.
-                    "annotations": {"weft.run/needs": ""},
-                },
+                "metadata": {"name": "region-" + region},
                 "data": {"region": region},
-            }
-        return out
+            }, needs=[])
+        return

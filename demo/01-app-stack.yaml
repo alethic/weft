@@ -47,7 +47,6 @@ spec:
   program: |
     def compose(variable, observed):
         platform = read("v1", "ConfigMap", "platform")
-        out = {}
 
         # Nothing can be built without these, so require() rather than get():
         # a missing one puts the Weave in Waiting naming the exact field.
@@ -60,11 +59,11 @@ spec:
         cluster = get(platform, 'metadata.annotations["platform.example/cluster"]', "unregistered")
 
         # ---- the identity everything else hangs off -------------------------
-        out["serviceaccount"] = {
+        resource("serviceaccount", {
             "apiVersion": "v1",
             "kind": "ServiceAccount",
             "metadata": {"name": variable.name},
-        }
+        })
 
         # The API server assigns the uid after the apply returns. Until it
         # lands, everything downstream is simply not returned - which is
@@ -73,7 +72,7 @@ spec:
         sa_uid = get(observed, ["serviceaccount", "metadata", "uid"])
         if not sa_uid:
             pending("the ServiceAccount has not been assigned a uid")
-            return out
+            return
 
         # ---- everything derived from that identity --------------------------
         #
@@ -99,7 +98,7 @@ spec:
             },
         }
 
-        out["values"] = {
+        resource("values", {
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {
@@ -110,13 +109,13 @@ spec:
                 "values.yaml": to_yaml(settings),
                 "features.json": to_json([f.name for f in variable.features if f.enabled]),
             },
-        }
+        })
 
         # A Secret whose contents are derived rather than stored anywhere. The
         # uid is stable for the life of the ServiceAccount, so the token is too
         # - and it changes if the identity is ever recreated.
         token = sha256(tenant + ":" + sa_uid)
-        out["secret"] = {
+        resource("secret", {
             "apiVersion": "v1",
             "kind": "Secret",
             "metadata": {
@@ -128,13 +127,13 @@ spec:
                 "token": b64encode(token),
                 "tenant": b64encode(tenant),
             },
-        }
+        })
 
         # The fan-out. One ConfigMap per environment, all in the same wave
         # because none of them depends on another, so teardown removes them in
         # a single step rather than one round trip at a time.
         for env in variable.environments:
-            out["env-" + env.name] = {
+            resource("env-" + env.name, {
                 "apiVersion": "v1",
                 "kind": "ConfigMap",
                 "metadata": {
@@ -147,15 +146,15 @@ spec:
                     "debug": str(env.debug).lower(),
                     "endpoint": "https://" + env.name + "." + region + ".example.test",
                 },
-            }
+            })
 
         # ---- the workload, once what it mounts exists -----------------------
         secret_uid = get(observed, ["secret", "metadata", "uid"])
         if not secret_uid:
             pending("the derived Secret has not been created")
-            return out
+            return
 
-        out["deployment"] = {
+        resource("deployment", {
             "apiVersion": "apps/v1",
             "kind": "Deployment",
             "metadata": {
@@ -194,9 +193,9 @@ spec:
                     },
                 },
             },
-        }
+        })
 
-        out["service"] = {
+        resource("service", {
             "apiVersion": "v1",
             "kind": "Service",
             "metadata": {
@@ -207,6 +206,6 @@ spec:
                 "selector": {"app": variable.name},
                 "ports": [{"port": 80, "targetPort": 80, "name": "http"}],
             },
-        }
+        })
 
-        return out
+        return

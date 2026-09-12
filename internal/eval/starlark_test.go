@@ -38,14 +38,12 @@ func programError(t *testing.T, err error) *ProgramError {
 func TestReturnsResource(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    return {
-        "cfg": {
-            "apiVersion": "v1",
-            "kind": "ConfigMap",
-            "metadata": {"name": variable.name},
-            "data": {"hello": "world"},
-        },
-    }
+    resource("cfg", {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": variable.name},
+        "data": {"hello": "world"},
+        })
 `, Request{Variables: map[string]any{"name": "greeting"}})
 
 	if len(res.Resources) != 1 {
@@ -66,14 +64,13 @@ def compose(variable, observed):
 func TestReturnOrderIsPreserved(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    out = {}
     for n in ["zulu", "alpha", "mike", "bravo"]:
-        out[n] = {
+        resource(n, {
             "apiVersion": "v1",
             "kind": "ConfigMap",
             "metadata": {"name": n},
-        }
-    return out
+        })
+    return
 `, Request{})
 
 	want := []string{"zulu", "alpha", "mike", "bravo"}
@@ -110,7 +107,7 @@ func TestRequireNamesTheUnresolvedField(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
     rgid = require(read("v1", "Thing", "resourceGroup"), "status.atProvider.id")
-    return {}
+    return
 `, Request{
 		Reader: fakeReader{
 			"resourceGroup": map[string]any{
@@ -134,7 +131,7 @@ def compose(variable, observed):
 func TestRequireOnAbsentSource(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    return {"x": require(read("v1", "Thing", "resourceGroup"), "status.atProvider.id")}
+    resource("x", require(read("v1", "Thing", "resourceGroup"), "status.atProvider.id"))
 `, Request{Reader: fakeReader{"resourceGroup": nil}})
 
 	if !res.Waiting() {
@@ -150,7 +147,7 @@ def compose(variable, observed):
 func TestRequireTreatsEmptyStringAsUnresolved(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    return {"x": require(read("v1", "Thing", "rg"), "status.atProvider.id")}
+    resource("x", require(read("v1", "Thing", "rg"), "status.atProvider.id"))
 `, Request{
 		Reader: fakeReader{
 			"rg": map[string]any{
@@ -172,7 +169,7 @@ def compose(variable, observed):
 func TestRequireNameOverride(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    return {"x": require(observed.get("app-identity"), "status.atProvider.principalId", name = "the app identity")}
+    resource("x", require(observed.get("app-identity"), "status.atProvider.principalId", name = "the app identity"))
 `, Request{})
 
 	if !res.Waiting() {
@@ -186,18 +183,16 @@ def compose(variable, observed):
 func TestGetWithDefault(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    return {
-        "cfg": {
-            "apiVersion": "v1",
-            "kind": "ConfigMap",
-            "metadata": {"name": "c"},
-            "data": {
-                "present": get(read("v1", "Thing", "rg"), "status.atProvider.id", "missing"),
-                "absent": get(read("v1", "Thing", "rg"), "status.atProvider.nope", "fallback"),
-                "throughNone": get(read("v1", "Thing", "nothing"), "a.b.c", "fallback"),
-            },
+    resource("cfg", {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "c"},
+        "data": {
+            "present": get(read("v1", "Thing", "rg"), "status.atProvider.id", "missing"),
+            "absent": get(read("v1", "Thing", "rg"), "status.atProvider.nope", "fallback"),
+            "throughNone": get(read("v1", "Thing", "nothing"), "a.b.c", "fallback"),
         },
-    }
+        })
 `, Request{
 		Reader: fakeReader{
 			"rg": map[string]any{
@@ -243,14 +238,12 @@ func TestBracketPathReachesAnnotation(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
     name = require(read("v1", "Thing", "storage"), 'metadata.annotations["crossplane.io/external-name"]')
-    return {
-        "cfg": {
-            "apiVersion": "v1",
-            "kind": "ConfigMap",
-            "metadata": {"name": "c"},
-            "data": {"account": name},
-        },
-    }
+    resource("cfg", {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "c"},
+        "data": {"account": name},
+        })
 `, req)
 
 	data := res.Resources[0].Object["data"].(map[string]any)
@@ -264,7 +257,7 @@ def compose(variable, observed):
 func TestMissingExternalNameWaits(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    return {"x": require(read("v1", "Thing", "storage"), 'metadata.annotations["crossplane.io/external-name"]')}
+    resource("x", require(read("v1", "Thing", "storage"), 'metadata.annotations["crossplane.io/external-name"]'))
 `, Request{
 		Reader: fakeReader{
 			"storage": map[string]any{
@@ -294,14 +287,12 @@ def compose(variable, observed):
             {"name": "MODE", "value": "prod"},
         ],
     }
-    return {
-        "values": {
-            "apiVersion": "v1",
-            "kind": "ConfigMap",
-            "metadata": {"name": "release-values"},
-            "data": {"values.yaml": to_yaml(values)},
-        },
-    }
+    resource("values", {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "release-values"},
+        "data": {"values.yaml": to_yaml(values)},
+        })
 `, Request{Variables: map[string]any{"image": "ghcr.io/x/y", "serviceBus": "sb://host"}})
 
 	data := res.Resources[0].Object["data"].(map[string]any)
@@ -323,14 +314,12 @@ func TestToYAMLUsesBlockScalarForMultilineStrings(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
     script = "CREATE USER [x] FROM EXTERNAL PROVIDER;\nGO\n"
-    return {
-        "cfg": {
-            "apiVersion": "v1",
-            "kind": "ConfigMap",
-            "metadata": {"name": "c"},
-            "data": {"doc": to_yaml({"script": script})},
-        },
-    }
+    resource("cfg", {
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {"name": "c"},
+        "data": {"doc": to_yaml({"script": script})},
+        })
 `, Request{})
 
 	doc := res.Resources[0].Object["data"].(map[string]any)["doc"].(string)
@@ -344,16 +333,15 @@ def compose(variable, observed):
 func TestFanOutOverVariables(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    out = {}
     for role in variable.roles:
         key = "ra-" + role.name
-        out[key] = {
+        resource(key, {
             "apiVersion": "authorization.azure.m.upbound.io/v1beta1",
             "kind": "RoleAssignment",
             "metadata": {"name": key},
             "spec": {"forProvider": {"roleDefinitionName": role.role, "scope": variable.scope}},
-        }
-    return out
+        })
+    return
 `, Request{Variables: map[string]any{
 		"scope": "/subscriptions/x",
 		"roles": []any{
@@ -376,21 +364,20 @@ def compose(variable, observed):
 func TestSelfReferenceStaging(t *testing.T) {
 	program := `
 def compose(variable, observed):
-    out = {}
-    out["identity"] = {
+    resource("identity", {
         "apiVersion": "managedidentity.azure.m.upbound.io/v1beta1",
         "kind": "UserAssignedIdentity",
         "metadata": {"name": "app"},
-    }
+    })
     pid = get(observed, ["identity", "status", "atProvider", "principalId"])
     if pid:
-        out["assignment"] = {
+        resource("assignment", {
             "apiVersion": "authorization.azure.m.upbound.io/v1beta1",
             "kind": "RoleAssignment",
             "metadata": {"name": "app-sb"},
             "spec": {"forProvider": {"principalId": pid}},
-        }
-    return out
+        })
+    return
 `
 
 	// First pass: nothing observed, so only the identity is emitted.
@@ -443,7 +430,7 @@ func TestLoadIsRejected(t *testing.T) {
 load("helpers.star", "helper")
 
 def compose(variable, observed):
-    return {}
+    return
 `, Request{})
 
 	pe := programError(t, err)
@@ -458,7 +445,7 @@ def compose(variable, observed):
     total = 0
     for i in range(1000000):
         total += i
-    return {}
+    return
 `})
 
 	pe := programError(t, err)
@@ -470,12 +457,11 @@ def compose(variable, observed):
 func TestResourceCountLimit(t *testing.T) {
 	_, err := NewStarlark(Options{MaxResources: 3}).Evaluate(context.Background(), Request{Program: `
 def compose(variable, observed):
-    out = {}
     for i in range(10):
-        out["cfg" + str(i)] = {
+        resource("cfg" + str(i), {
             "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c" + str(i)},
-        }
-    return out
+        })
+    return
 `})
 
 	pe := programError(t, err)
@@ -493,7 +479,7 @@ def countdown(n):
 
 def compose(variable, observed):
     countdown(5)
-    return {}
+    return
 `, Request{})
 
 	if err == nil {
@@ -510,41 +496,37 @@ func TestInvalidOutputs(t *testing.T) {
 		message string
 	}{
 		{
-			name:   "returns None",
-			body:   `    return None`,
-			reason: ReasonInvalidOutput,
-		},
-		{
-			name:   "returns a list",
-			body:   `    return [1, 2]`,
-			reason: ReasonInvalidOutput,
+			name:    "returns a list",
+			body:    `    return [1, 2]`,
+			reason:  ReasonInvalidOutput,
+			message: "nothing to return",
 		},
 		{
 			name:   "resource is not a mapping",
-			body:   `    return {"a": "not a resource"}`,
+			body:   `    resource("a", "not a resource")`,
 			reason: ReasonInvalidOutput,
 		},
 		{
 			name:    "missing apiVersion",
-			body:    `    return {"a": {"kind": "ConfigMap", "metadata": {"name": "x"}}}`,
+			body:    `    resource("a", {"kind": "ConfigMap", "metadata": {"name": "x"}})`,
 			reason:  ReasonInvalidOutput,
 			message: "missing apiVersion",
 		},
 		{
 			name:    "missing name",
-			body:    `    return {"a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {}}}`,
+			body:    `    resource("a", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {}})`,
 			reason:  ReasonInvalidOutput,
 			message: "missing metadata.name",
 		},
 		{
 			name:    "generateName",
-			body:    `    return {"a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"generateName": "x-"}}}`,
+			body:    `    resource("a", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"generateName": "x-"}})`,
 			reason:  ReasonInvalidOutput,
 			message: "generateName",
 		},
 		{
 			name:    "unusable key",
-			body:    `    return {"not a key!": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "x"}}}`,
+			body:    `    resource("not a key!", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "x"}})`,
 			reason:  ReasonInvalidOutput,
 			message: "not usable as an identity",
 		},
@@ -585,7 +567,7 @@ func TestSyntaxError(t *testing.T) {
 func TestMissingFieldIsAnErrorNotNone(t *testing.T) {
 	_, err := run(t, `
 def compose(variable, observed):
-    return {"x": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": read("v1", "Thing", "rg").staus}}}
+    resource("x", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": read("v1", "Thing", "rg").staus}})
 `, Request{Reader: fakeReader{
 		"rg": map[string]any{"apiVersion": "v1", "kind": "ResourceGroup", "metadata": map[string]any{"name": "rg"}},
 	}})
@@ -604,14 +586,12 @@ def compose(variable, observed):
 func TestIntegersSurviveRoundTrip(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    return {
-        "d": {
-            "apiVersion": "apps/v1",
-            "kind": "Deployment",
-            "metadata": {"name": "d"},
-            "spec": {"replicas": variable.replicas, "doubled": variable.replicas * 2},
-        },
-    }
+    resource("d", {
+        "apiVersion": "apps/v1",
+        "kind": "Deployment",
+        "metadata": {"name": "d"},
+        "spec": {"replicas": variable.replicas, "doubled": variable.replicas * 2},
+        })
 `, Request{Variables: map[string]any{"replicas": int64(3)}})
 
 	spec := res.Resources[0].Object["spec"].(map[string]any)
@@ -629,12 +609,10 @@ def compose(variable, observed):
     d = {}
     d["zebra"] = 1
     d["apple"] = [1, 2]
-    return {
-        "c": {
-            "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
-            "data": {"compact": to_json(d), "pretty": to_json(d, indent = 2)},
-        },
-    }
+    resource("c", {
+        "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
+        "data": {"compact": to_json(d), "pretty": to_json(d, indent = 2)},
+        })
 `, Request{})
 
 	data := res.Resources[0].Object["data"].(map[string]any)
@@ -651,19 +629,17 @@ func TestRoundTripHelpers(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
     parsed = from_yaml("a: 1\nb: [x, y]\n")
-    return {
-        "c": {
-            "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
-            "data": {
-                "a": str(parsed.a),
-                "b1": parsed.b[1],
-                "json": to_json(from_json('{"k": "v"}')),
-                "b64": b64encode("hello"),
-                "back": b64decode(b64encode("hello")),
-                "hash": sha256("x")[:8],
-            },
+    resource("c", {
+        "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
+        "data": {
+            "a": str(parsed.a),
+            "b1": parsed.b[1],
+            "json": to_json(from_json('{"k": "v"}')),
+            "b64": b64encode("hello"),
+            "back": b64decode(b64encode("hello")),
+            "hash": sha256("x")[:8],
         },
-    }
+        })
 `, Request{})
 
 	data := res.Resources[0].Object["data"].(map[string]any)
@@ -684,16 +660,14 @@ def compose(variable, observed):
 func TestHasBuiltin(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    return {
-        "c": {
-            "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
-            "data": {
-                "yes": str(has(read("v1", "Thing", "rg"), "status.atProvider.id")),
-                "no": str(has(read("v1", "Thing", "rg"), "status.atProvider.other")),
-                "nullIsAbsent": str(has(read("v1", "Thing", "rg"), "status.nulled")),
-            },
+    resource("c", {
+        "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
+        "data": {
+            "yes": str(has(read("v1", "Thing", "rg"), "status.atProvider.id")),
+            "no": str(has(read("v1", "Thing", "rg"), "status.atProvider.other")),
+            "nullIsAbsent": str(has(read("v1", "Thing", "rg"), "status.nulled")),
         },
-    }
+        })
 `, Request{Reader: fakeReader{
 		"rg": map[string]any{
 			"apiVersion": "v1", "kind": "ResourceGroup", "metadata": map[string]any{"name": "rg"},
@@ -755,7 +729,7 @@ def compose(variable, observed):
     total = 0
     for i in range(100000000):
         total += i
-    return {}
+    return
 `})
 
 	if !errors.Is(err, context.Canceled) {
@@ -769,7 +743,7 @@ def compose(variable, observed):
 func TestReachingIntoSomethingAbsent(t *testing.T) {
 	_, err := run(t, `
 def compose(variable, observed):
-    return {"x": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": read("v1", "Thing", "nope").metadata.name}}}
+    resource("x", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": read("v1", "Thing", "nope").metadata.name}})
 `, Request{Reader: fakeReader{"rg": nil}})
 
 	pe := programError(t, err)
@@ -782,12 +756,10 @@ func TestObservedIsIterable(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
     names = sorted([k for k in observed])
-    return {
-        "c": {
-            "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
-            "data": {"keys": ",".join(names), "count": str(len(observed))},
-        },
-    }
+    resource("c", {
+        "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
+        "data": {"keys": ",".join(names), "count": str(len(observed))},
+        })
 `, Request{Observed: map[string]any{
 		"b": map[string]any{"kind": "X"},
 		"a": map[string]any{"kind": "Y"},
@@ -806,13 +778,13 @@ def compose(variable, observed):
 func TestPendingReturnsResourcesAndAReason(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    out = {"identity": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "id"}}}
+    resource("identity", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "id"}})
     principal = get(observed, ["identity", "status", "principalId"])
     if not principal:
         pending("principalId on the app identity")
-        return out
-    out["assignment"] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "ra"}}
-    return out
+        return
+    resource("assignment", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "ra"}})
+    return
 `, Request{})
 
 	if res.Waiting() {
@@ -834,7 +806,7 @@ def compose(variable, observed):
     for i in range(5):
         pending("the resource group id")
     pending("the service bus id")
-    return {}
+    return
 `, Request{})
 
 	if len(res.Pending) != 2 {
@@ -846,7 +818,7 @@ func TestPendingNeedsAReason(t *testing.T) {
 	_, err := run(t, `
 def compose(variable, observed):
     pending("")
-    return {}
+    return
 `, Request{})
 	if err == nil {
 		t.Fatal("an empty reason should be rejected: it becomes a condition message")
@@ -857,7 +829,7 @@ def compose(variable, observed):
 func TestNoPendingWhenResolved(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
-    return {"a": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}}}
+    resource("a", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "a"}})
 `, Request{})
 	if len(res.Pending) != 0 {
 		t.Errorf("pending = %v, want none", res.Pending)
@@ -874,12 +846,10 @@ func TestLanguageBounds(t *testing.T) {
 		res := mustRun(t, `
 def compose(variable, observed):
     unique = set(["a", "b", "a"])
-    return {
-        "c": {
-            "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
-            "data": {"n": str(len(unique))},
-        },
-    }
+    resource("c", {
+        "apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"},
+        "data": {"n": str(len(unique))},
+        })
 `, Request{})
 		if got := res.Resources[0].Object["data"].(map[string]any)["n"]; got != "2" {
 			t.Errorf("set deduplication produced %v, want 2", got)
@@ -891,7 +861,7 @@ def compose(variable, observed):
 def compose(variable, observed):
     while True:
         break
-    return {}
+    return
 `, Request{})
 		pe := programError(t, err)
 		if pe.Reason != ReasonSyntaxError {
@@ -905,7 +875,7 @@ if 1 == 1:
     x = 2
 
 def compose(variable, observed):
-    return {}
+    return
 `, Request{})
 		pe := programError(t, err)
 		if pe.Reason != ReasonSyntaxError {
@@ -919,7 +889,7 @@ X = 1
 X = 2
 
 def compose(variable, observed):
-    return {}
+    return
 `, Request{})
 		pe := programError(t, err)
 		if pe.Reason != ReasonSyntaxError {

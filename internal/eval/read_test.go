@@ -19,8 +19,8 @@ func TestReadReturnsTheObject(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
     rg = read("azure.m.upbound.io/v1beta1", "ResourceGroup", "sweep-env")
-    return {"x": {"apiVersion": "v1", "kind": "ConfigMap",
-                  "metadata": {"name": rg.metadata.name}}}
+    resource("x", {"apiVersion": "v1", "kind": "ConfigMap",
+              "metadata": {"name": rg.metadata.name}})
 `, Request{Reader: fakeReader{"sweep-env": obj("ResourceGroup", "sweep-env", nil)}})
 
 	if len(res.Resources) != 1 {
@@ -39,7 +39,7 @@ func TestReadOfSomethingAbsentIsFalsey(t *testing.T) {
 def compose(variable, observed):
     if not read("v1", "ConfigMap", "licence"):
         return wait("no licence ConfigMap in this namespace yet")
-    return {}
+    return
 `, Request{Reader: fakeReader{}})
 
 	if !res.Waiting() || res.Wait.Reason != "no licence ConfigMap in this namespace yet" {
@@ -54,7 +54,7 @@ func TestConditionalGateOverARead(t *testing.T) {
 def compose(variable, observed):
     if variable.useSql and not read("v1", "ConfigMap", "database"):
         return wait("SQL is enabled but the database is not there yet")
-    return {"cfg": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"}}}
+    resource("cfg", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "c"}})
 `
 	res := mustRun(t, program, Request{
 		Variables: map[string]any{"useSql": true},
@@ -79,10 +79,10 @@ func TestGetAndHasTolerateAnAbsentRead(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
     missing = read("v1", "ConfigMap", "nope")
-    return {"x": {"apiVersion": "v1", "kind": "ConfigMap",
-                  "metadata": {"name": "x"},
-                  "data": {"got": get(missing, "data.key", "fallback"),
-                           "has": str(has(missing, "data.key"))}}}
+    resource("x", {"apiVersion": "v1", "kind": "ConfigMap",
+              "metadata": {"name": "x"},
+              "data": {"got": get(missing, "data.key", "fallback"),
+                       "has": str(has(missing, "data.key"))}})
 `, Request{Reader: fakeReader{}})
 
 	data := res.Resources[0].Object["data"].(map[string]any)
@@ -99,7 +99,7 @@ def compose(variable, observed):
 func TestAbsentReadNamesItselfOnFieldAccess(t *testing.T) {
 	_, err := run(t, `
 def compose(variable, observed):
-    return {"x": read("v1", "MSSQLDatabase", "tpyo").status.atProvider.id}
+    resource("x", read("v1", "MSSQLDatabase", "tpyo").status.atProvider.id)
 `, Request{Reader: fakeReader{}})
 
 	pe := programError(t, err)
@@ -114,7 +114,7 @@ func TestReadFailurePropagatesTheCallerError(t *testing.T) {
 	boom := errors.New("configmaps is forbidden: User cannot get resource")
 	_, err := run(t, `
 def compose(variable, observed):
-    return {"x": read("v1", "ConfigMap", "denied")}
+    resource("x", read("v1", "ConfigMap", "denied"))
 `, Request{Reader: fakeReader{"denied": boom}})
 
 	if !errors.Is(err, boom) {
@@ -129,7 +129,7 @@ def compose(variable, observed):
 func TestReadWithoutAReaderIsRefused(t *testing.T) {
 	_, err := run(t, `
 def compose(variable, observed):
-    return {"x": read("v1", "ConfigMap", "any")}
+    resource("x", read("v1", "ConfigMap", "any"))
 `, Request{})
 
 	pe := programError(t, err)
@@ -144,11 +144,10 @@ func TestSelectReturnsMatchesSortedByName(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
     tenants = select("v1", "ConfigMap", labels={"role": "tenant"})
-    out = {}
     for i in range(len(tenants)):
-        out["t" + str(i)] = {"apiVersion": "v1", "kind": "ConfigMap",
-                             "metadata": {"name": tenants[i].metadata.name}}
-    return out
+        resource("t" + str(i), {"apiVersion": "v1", "kind": "ConfigMap",
+                             "metadata": {"name": tenants[i].metadata.name}})
+    return
 `, Request{Reader: fakeReader{
 		"beta":    obj("ConfigMap", "beta", map[string]any{"role": "tenant"}),
 		"alpha":   obj("ConfigMap", "alpha", map[string]any{"role": "tenant"}),
@@ -171,8 +170,8 @@ func TestSelectWithNoLabelsMatchesEverythingOfThatKind(t *testing.T) {
 	res := mustRun(t, `
 def compose(variable, observed):
     all = select("v1", "ConfigMap")
-    return {"x": {"apiVersion": "v1", "kind": "ConfigMap",
-                  "metadata": {"name": "x"}, "data": {"n": str(len(all))}}}
+    resource("x", {"apiVersion": "v1", "kind": "ConfigMap",
+              "metadata": {"name": "x"}, "data": {"n": str(len(all))}})
 `, Request{Reader: fakeReader{
 		"a": obj("ConfigMap", "a", nil),
 		"b": obj("ConfigMap", "b", map[string]any{"role": "tenant"}),
@@ -190,7 +189,7 @@ func TestReadBudget(t *testing.T) {
 def compose(variable, observed):
     for i in range(10):
         read("v1", "ConfigMap", "cm-" + str(i))
-    return {}
+    return
 `, Request{Reader: fakeReader{}}, func(o *Options) { o.MaxReads = 3 })
 
 	pe := programError(t, err)
@@ -206,7 +205,7 @@ func TestRepeatedReadsCountOnce(t *testing.T) {
 def compose(variable, observed):
     for i in range(50):
         read("v1", "ConfigMap", "same")
-    return {}
+    return
 `, Request{Reader: fakeReader{"same": obj("ConfigMap", "same", nil)}}, func(o *Options) { o.MaxReads = 2 })
 
 	if err != nil {
@@ -222,7 +221,7 @@ func TestSelectSizeLimit(t *testing.T) {
 	_, err := run(t, `
 def compose(variable, observed):
     select("v1", "ConfigMap")
-    return {}
+    return
 `, Request{Reader: many}, func(o *Options) { o.MaxSelected = 2 })
 
 	pe := programError(t, err)

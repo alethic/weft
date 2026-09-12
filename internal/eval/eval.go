@@ -40,6 +40,18 @@ type Resource struct {
 	// (namespace, owner references, labels) is the caller's job so that
 	// evaluation stays pure.
 	Object map[string]any
+
+	// Needs are the keys of the resources this one depends on, resolved from
+	// the references the program made with resource(..., needs=[...]).
+	//
+	// Empty means the program said nothing, which the caller reads as "after
+	// whatever came before me" - the order the program already wrote. A
+	// resource that named an empty list says it depends on nothing, and that
+	// distinction is the difference between a chain and a fan-out.
+	Needs []string
+
+	// NeedsDeclared is true when the program passed needs at all, empty or not.
+	NeedsDeclared bool
 }
 
 // Wait is the third outcome: not resolved, not invalid, not yet.

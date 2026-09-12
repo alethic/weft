@@ -20,13 +20,11 @@ def compose(variable, observed):
     for k in variable:
         v = variable[k]
         data[k] = v if type(v) == "string" else to_json(v)
-    return {
-        "echo": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "echo"},
-            "data": data,
-        },
-    }
+    resource("echo", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "echo"},
+        "data": data,
+        })
 `
 
 func (h *harness) createWithVariables(name string, entries []v1alpha1.Variable) *v1alpha1.Weave {

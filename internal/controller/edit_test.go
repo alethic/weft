@@ -26,9 +26,7 @@ func TestEditingReplacesRatherThanOrphans(t *testing.T) {
 
 	h.create("editable", `
 def compose(variable, observed):
-    return {
-        "thing": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing-one"}},
-    }
+    resource("thing", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing-one"}})
 `, "")
 	h.settle("editable", 2)
 
@@ -41,9 +39,7 @@ def compose(variable, observed):
 	w := h.weave("editable")
 	w.Spec.Program = `
 def compose(variable, observed):
-    return {
-        "thing": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing-two"}},
-    }
+    resource("thing", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing-two"}})
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
 		t.Fatal(err)
@@ -76,13 +72,11 @@ func TestEditingTheKindReplacesTheObject(t *testing.T) {
 
 	h.create("kindchange", `
 def compose(variable, observed):
-    return {
-        "payload": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "payload"},
-            "data": {"k": "v"},
-        },
-    }
+    resource("payload", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "payload"},
+        "data": {"k": "v"},
+        })
 `, "")
 	h.settle("kindchange", 2)
 
@@ -93,13 +87,11 @@ def compose(variable, observed):
 	w := h.weave("kindchange")
 	w.Spec.Program = `
 def compose(variable, observed):
-    return {
-        "payload": {
-            "apiVersion": "v1", "kind": "Secret",
-            "metadata": {"name": "payload"},
-            "stringData": {"k": "v"},
-        },
-    }
+    resource("payload", {
+        "apiVersion": "v1", "kind": "Secret",
+        "metadata": {"name": "payload"},
+        "stringData": {"k": "v"},
+        })
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
 		t.Fatal(err)
@@ -130,10 +122,9 @@ func TestEditingConvergesOnTheNewShape(t *testing.T) {
 
 	h.create("shape", `
 def compose(variable, observed):
-    out = {}
     for n in ["keep", "drop-a", "drop-b"]:
-        out[n] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}}
-    return out
+        resource(n, {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}})
+    return
 `, "")
 	h.settle("shape", 2)
 
@@ -146,10 +137,9 @@ def compose(variable, observed):
 	w := h.weave("shape")
 	w.Spec.Program = `
 def compose(variable, observed):
-    out = {}
     for n in ["keep", "added-a", "added-b"]:
-        out[n] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}}
-    return out
+        resource(n, {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n}})
+    return
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
 		t.Fatal(err)
@@ -183,10 +173,9 @@ func TestReplacedObjectsAreRemovedInOrder(t *testing.T) {
 
 	h.create("ordered", `
 def compose(variable, observed):
-    out = {}
     for n in ["base", "middle", "top"]:
-        out[n] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n + "-v1"}}
-    return out
+        resource(n, {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n + "-v1"}})
+    return
 `, "")
 	h.settle("ordered", 2)
 
@@ -202,10 +191,9 @@ def compose(variable, observed):
 	w := h.weave("ordered")
 	w.Spec.Program = `
 def compose(variable, observed):
-    out = {}
     for n in ["base", "middle", "top"]:
-        out[n] = {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n + "-v2"}}
-    return out
+        resource(n, {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": n + "-v2"}})
+    return
 `
 	if err := testK8s.Update(h.ctx, w); err != nil {
 		t.Fatal(err)
@@ -256,13 +244,11 @@ func TestRefusesToTakeOverAnExistingObject(t *testing.T) {
 
 	h.create("greedy", `
 def compose(variable, observed):
-    return {
-        "grab": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "preexisting"},
-            "data": {"owner": "weft"},
-        },
-    }
+    resource("grab", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "preexisting"},
+        "data": {"owner": "weft"},
+        })
 `, "")
 	h.settle("greedy", 2)
 
@@ -301,13 +287,11 @@ func TestAdoptsWhenTheObjectConsents(t *testing.T) {
 
 	h.create("adopter", `
 def compose(variable, observed):
-    return {
-        "onboarded": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "onboarded"},
-            "data": {"owner": "weft"},
-        },
-    }
+    resource("onboarded", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "onboarded"},
+        "data": {"owner": "weft"},
+        })
 `, "")
 	h.settle("adopter", 2)
 
@@ -340,9 +324,7 @@ func TestAdoptionAnnotationIsSpecific(t *testing.T) {
 
 	h.create("hopeful", `
 def compose(variable, observed):
-    return {
-        "x": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "spoken-for"}},
-    }
+    resource("x", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "spoken-for"}})
 `, "")
 	h.settle("hopeful", 2)
 
@@ -368,10 +350,8 @@ func TestRefusesTwoKeysForOneObject(t *testing.T) {
 
 	h.create("colliding", `
 def compose(variable, observed):
-    return {
-        "first": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "shared"}},
-        "second": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "shared"}},
-    }
+    resource("first", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "shared"}})
+    resource("second", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "shared"}})
 `, "")
 	h.settle("colliding", 3)
 
@@ -390,12 +370,10 @@ func TestOrphanPropagationKeepsTheResources(t *testing.T) {
 
 	h.create("orphaning", `
 def compose(variable, observed):
-    return {
-        "keeper": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "keeper"}, "data": {"k": "v"},
-        },
-    }
+    resource("keeper", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "keeper"}, "data": {"k": "v"},
+        })
 `, "")
 	h.settle("orphaning", 2)
 
@@ -448,9 +426,7 @@ func TestDefaultDeletionStillRemovesTheResources(t *testing.T) {
 
 	h.create("cascading", `
 def compose(variable, observed):
-    return {
-        "goes": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "goes"}},
-    }
+    resource("goes", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "goes"}})
 `, "")
 	h.settle("cascading", 2)
 

@@ -175,6 +175,9 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 
 	// The read session lives on the thread for the same reason wait and pending
 	// do: threads are per-evaluation, so nothing here is shared state.
+	declared := newDeclaredSet()
+	thread.SetLocal(resourcesLocalKey, declared)
+
 	thread.SetLocal(readerLocalKey, &readSession{
 		ctx:         ctx,
 		reader:      req.Reader,
@@ -215,7 +218,7 @@ func (s *Starlark) Evaluate(ctx context.Context, req Request) (*Result, error) {
 		return s.classify(ctx, thread, err)
 	}
 
-	res, err := s.decode(ret)
+	res, err := s.decode(ret, declared)
 	if err != nil {
 		return nil, err
 	}
@@ -267,77 +270,48 @@ func (s *Starlark) classify(ctx context.Context, thread *starlark.Thread, err er
 }
 
 // decode validates and converts the value compose() returned.
-func (s *Starlark) decode(ret starlark.Value) (*Result, error) {
+func (s *Starlark) decode(ret starlark.Value, set *declaredSet) (*Result, error) {
 	if w, ok := ret.(*waitValue); ok {
 		return &Result{Wait: &Wait{Reason: w.reason}}, nil
 	}
+	if ret != starlark.None {
+		return nil, programErrorf(ReasonInvalidOutput,
+			"compose returned %s. Declaring resources is what produces them, so there is nothing to "+
+				"return except wait(...)", ret.Type())
+	}
 
-	keys, vals, err := orderedItems(ret)
-	if err != nil {
+	if err := checkNeeds(set); err != nil {
 		return nil, programErrorf(ReasonInvalidOutput, "%v", err)
 	}
-	if len(keys) > s.opts.MaxResources {
+	if len(set.order) > s.opts.MaxResources {
 		return nil, programErrorf(ReasonOutputTooLarge,
-			"program returned %d resources, the limit is %d", len(keys), s.opts.MaxResources)
+			"program declared %d resources, the limit is %d", len(set.order), s.opts.MaxResources)
 	}
 
 	b := &budget{maxNodes: s.opts.MaxValues}
-	out := make([]Resource, 0, len(keys))
-	seen := make(map[string]bool, len(keys))
-	for i, k := range keys {
-		if !keyPattern.MatchString(k) || len(k) > 253 {
+	out := make([]Resource, 0, len(set.order))
+	for _, rv := range set.order {
+		if !keyPattern.MatchString(rv.key) || len(rv.key) > 253 {
 			return nil, programErrorf(ReasonInvalidOutput,
-				"resource key %q is not usable as an identity: keys must be alphanumeric with -, _ or . inside, at most 253 characters", k)
+				"resource key %q is not usable as an identity: keys must be alphanumeric with -, _ or . inside, at most 253 characters", rv.key)
 		}
-		if seen[k] {
-			return nil, programErrorf(ReasonInvalidOutput, "resource key %q returned twice", k)
-		}
-		seen[k] = true
 
-		obj, err := asStringMap(vals[i], b)
+		obj, err := asStringMap(rv.body, b)
 		if err != nil {
 			if strings.Contains(err.Error(), "exceeds") {
-				return nil, programErrorf(ReasonOutputTooLarge, "resource %q: %v", k, err)
+				return nil, programErrorf(ReasonOutputTooLarge, "resource %q: %v", rv.key, err)
 			}
-			return nil, programErrorf(ReasonInvalidOutput, "resource %q: %v", k, err)
+			return nil, programErrorf(ReasonInvalidOutput, "resource %q: %v", rv.key, err)
 		}
 		if err := checkShape(obj); err != nil {
-			return nil, programErrorf(ReasonInvalidOutput, "resource %q: %v", k, err)
+			return nil, programErrorf(ReasonInvalidOutput, "resource %q: %v", rv.key, err)
 		}
-		out = append(out, Resource{Key: k, Object: obj})
+		out = append(out, Resource{
+			Key: rv.key, Object: obj,
+			Needs: needKeys(rv), NeedsDeclared: rv.declared,
+		})
 	}
 	return &Result{Resources: out}, nil
-}
-
-// orderedItems extracts key/value pairs in their original order. Order is the
-// whole point: it becomes apply order, and therefore teardown order.
-func orderedItems(v starlark.Value) ([]string, []starlark.Value, error) {
-	switch t := v.(type) {
-	case *starlark.Dict:
-		items := t.Items()
-		keys := make([]string, 0, len(items))
-		vals := make([]starlark.Value, 0, len(items))
-		for _, kv := range items {
-			k, ok := starlark.AsString(kv[0])
-			if !ok {
-				return nil, nil, fmt.Errorf("resource keys must be strings, got %s", kv[0].Type())
-			}
-			keys = append(keys, k)
-			vals = append(vals, kv[1])
-		}
-		return keys, vals, nil
-	case *Object:
-		vals := make([]starlark.Value, 0, len(t.keys))
-		for _, k := range t.keys {
-			vals = append(vals, t.m[k])
-		}
-		return t.keys, vals, nil
-	case starlark.NoneType:
-		return nil, nil, fmt.Errorf(
-			"compose() returned None; return an empty mapping to mean \"no resources\", or wait(reason) to mean \"not yet\"")
-	default:
-		return nil, nil, fmt.Errorf("compose() must return a mapping of key to resource, got %s", v.Type())
-	}
 }
 
 // checkShape enforces the minimum a returned value must have to be a resource

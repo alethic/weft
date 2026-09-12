@@ -15,12 +15,10 @@ func TestProvenanceIsStampedOnEverything(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("stamper", `
 def compose(variable, observed):
-    return {
-        "thing": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "thing"},
-        },
-    }
+    resource("thing", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "thing"},
+        })
 `, "")
 	h.settle("stamper", 2)
 
@@ -48,13 +46,11 @@ func TestUnownedResourceIsReclaimedAfterStatusLoss(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("forgetful", `
 def compose(variable, observed):
-    return {
-        "keeper": {
-            "apiVersion": "v1", "kind": "ConfigMap",
-            "metadata": {"name": "keeper", "annotations": {"weft.run/owned": "false"}},
-            "data": {"v": "1"},
-        },
-    }
+    resource("keeper", {
+        "apiVersion": "v1", "kind": "ConfigMap",
+        "metadata": {"name": "keeper", "annotations": {"weft.run/owned": "false"}},
+        "data": {"v": "1"},
+        })
 `, "")
 	h.settle("forgetful", 2)
 
@@ -91,7 +87,7 @@ func TestOwnedResourceIsReclaimedAfterItsReferenceIsStripped(t *testing.T) {
 	h := newHarness(t, nil)
 	h.create("stripped", `
 def compose(variable, observed):
-    return {"thing": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing"}}}
+    resource("thing", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "thing"}})
 `, "")
 	h.settle("stripped", 2)
 
@@ -142,7 +138,7 @@ func TestProvenanceFromAnotherWeaveIsNotReclaimed(t *testing.T) {
 
 	h.create("claimant", `
 def compose(variable, observed):
-    return {"thing": {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "impostor"}}}
+    resource("thing", {"apiVersion": "v1", "kind": "ConfigMap", "metadata": {"name": "impostor"}})
 `, "")
 	h.settle("claimant", 2)
 

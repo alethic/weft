@@ -81,11 +81,8 @@ func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Ite
 			return nil, fmt.Errorf("resource %q %w", r.Key, err)
 		}
 
-		deps, declared, err := needsFrom(u.GetAnnotations(), r.Key)
-		if err != nil {
-			return nil, err
-		}
-		if !declared && i > 0 {
+		deps := r.Needs
+		if !r.NeedsDeclared && i > 0 {
 			// Undeclared means "after whatever came before me", which is what
 			// the program already said by returning it in that order. Only a
 			// resource that names its dependencies is freed from the chain.
@@ -108,29 +105,6 @@ func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Ite
 	return items, nil
 }
 
-// needsFrom parses the needs annotation. The second result distinguishes "named
-// nothing" from "did not say", which are different: an explicit empty value is
-// a resource declaring it depends on nothing at all.
-func needsFrom(annotations map[string]string, key string) ([]string, bool, error) {
-	raw, ok := annotations[naming.NeedsAnnotation]
-	if !ok {
-		return nil, false, nil
-	}
-
-	var out []string
-	for _, part := range strings.Split(raw, ",") {
-		dep := strings.TrimSpace(part)
-		if dep == "" {
-			continue
-		}
-		if dep == key {
-			return nil, false, fmt.Errorf("resource %q sets %s to itself", key, naming.NeedsAnnotation)
-		}
-		out = append(out, dep)
-	}
-	return out, true, nil
-}
-
 // depths assigns each resource the length of the longest dependency chain
 // reaching it, which is its wave.
 //
@@ -145,11 +119,10 @@ func depths(items []Item, needs map[string][]string) (map[string]int32, error) {
 	for _, it := range items {
 		for _, dep := range needs[it.Key] {
 			if !known[dep] {
-				return nil, fmt.Errorf(
-					"resource %q needs %q, which this program does not return. %s names the keys of "+
-						"other resources in the same result, so this is either a typo or a resource that "+
-						"is only returned on some passes",
-					it.Key, dep, naming.NeedsAnnotation)
+				// resolveNeeds has already refused a reference to something that
+				// was not returned, so reaching here means the evaluator and
+				// this planner disagree about what came back.
+				return nil, fmt.Errorf("resource %q needs %q, which is not in the result", it.Key, dep)
 			}
 		}
 	}
@@ -168,8 +141,8 @@ func depths(items []Item, needs map[string][]string) (map[string]int32, error) {
 		case done:
 			return nil
 		case onStack:
-			return fmt.Errorf("resources %s form a dependency cycle through %s, so there is no order "+
-				"in which they can be applied", describeCycle(append(path, key)), naming.NeedsAnnotation)
+			return fmt.Errorf("resources %s form a dependency cycle, so there is no order in which "+
+				"they can be applied", describeCycle(append(path, key)))
 		}
 
 		state[key] = onStack

@@ -29,7 +29,7 @@ spec:
 
         platform = read("v1", "ConfigMap", "platform")
         countdown(10)
-        return {}
+        return
 ---
 # A program is self-contained. There is nowhere for load() to load from, and
 # saying so at compile time beats a confusing failure during evaluation.
@@ -44,7 +44,7 @@ spec:
     load("helpers.star", "helper")
 
     def compose(variable, observed):
-        return {}
+        return
 ---
 # Runtime bounding is what replaces the apply-time type checking a
 # schema-generating design would have had.
@@ -60,7 +60,7 @@ spec:
         total = 0
         for i in range(100000000):
             total += i
-        return {}
+        return
 ---
 # Same-namespace is the hard rule that makes plain owner references sufficient,
 # so an output reaching outside is refused rather than relocated.
@@ -73,13 +73,11 @@ spec:
   serviceAccountName: composer
   program: |
     def compose(variable, observed):
-        return {
-            "escapee": {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {"name": "escapee", "namespace": "kube-system"},
-            },
-        }
+        resource("escapee", {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "escapee", "namespace": "kube-system"},
+            })
 ---
 # A namespaced owner cannot own a cluster-scoped object, so it could never be
 # garbage collected. Refused before anything is created.
@@ -92,13 +90,11 @@ spec:
   serviceAccountName: composer
   program: |
     def compose(variable, observed):
-        return {
-            "ns": {
-                "apiVersion": "v1",
-                "kind": "Namespace",
-                "metadata": {"name": "weft-should-not-create-this"},
-            },
-        }
+        resource("ns", {
+            "apiVersion": "v1",
+            "kind": "Namespace",
+            "metadata": {"name": "weft-should-not-create-this"},
+            })
 ---
 # Weft owns what it creates and writes the reference itself. Letting a program
 # set one would let it hand its output to an owner that outlives the Weave.
@@ -111,21 +107,19 @@ spec:
   serviceAccountName: composer
   program: |
     def compose(variable, observed):
-        return {
-            "adopted": {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {
-                    "name": "adopted",
-                    "ownerReferences": [{
-                        "apiVersion": "v1",
-                        "kind": "ConfigMap",
-                        "name": "somebody-else",
-                        "uid": "00000000-0000-0000-0000-000000000000",
-                    }],
-                },
+        resource("adopted", {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {
+                "name": "adopted",
+                "ownerReferences": [{
+                    "apiVersion": "v1",
+                    "kind": "ConfigMap",
+                    "name": "somebody-else",
+                    "uid": "00000000-0000-0000-0000-000000000000",
+                }],
             },
-        }
+            })
 ---
 # A dependency naming a key the program does not return is a typo, and the whole
 # reason ordering is expressed as names rather than numbers: a wave number could
@@ -139,16 +133,14 @@ spec:
   serviceAccountName: composer
   program: |
     def compose(variable, observed):
-        return {
-            "identity": {
-                "apiVersion": "v1", "kind": "ConfigMap",
-                "metadata": {"name": "a"},
-            },
-            "assignment": {
-                "apiVersion": "v1", "kind": "ConfigMap",
-                "metadata": {"name": "b", "annotations": {"weft.run/needs": "idenity"}},
-            },
-        }
+        resource("identity", {
+            "apiVersion": "v1", "kind": "ConfigMap",
+            "metadata": {"name": "a"},
+            })
+        resource("assignment", {
+            "apiVersion": "v1", "kind": "ConfigMap",
+            "metadata": {"name": "b", "annotations": {"weft.run/needs": "idenity"}},
+            })
 ---
 # A cycle is reported rather than broken. Breaking one silently would produce an
 # apply order that looks fine and is not, and the program has said something
@@ -162,16 +154,14 @@ spec:
   serviceAccountName: composer
   program: |
     def compose(variable, observed):
-        return {
-            "a": {
-                "apiVersion": "v1", "kind": "ConfigMap",
-                "metadata": {"name": "a", "annotations": {"weft.run/needs": "b"}},
-            },
-            "b": {
-                "apiVersion": "v1", "kind": "ConfigMap",
-                "metadata": {"name": "b", "annotations": {"weft.run/needs": "a"}},
-            },
-        }
+        resource("a", {
+            "apiVersion": "v1", "kind": "ConfigMap",
+            "metadata": {"name": "a", "annotations": {"weft.run/needs": "b"}},
+            })
+        resource("b", {
+            "apiVersion": "v1", "kind": "ConfigMap",
+            "metadata": {"name": "b", "annotations": {"weft.run/needs": "a"}},
+            })
 ---
 # A typo must not quietly become None. That would render a resource with a blank
 # field which applies cleanly, and is a far worse failure than a backtrace - the
@@ -185,11 +175,9 @@ spec:
   serviceAccountName: composer
   program: |
     def compose(variable, observed):
-        return {
-            "cfg": {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {"name": "cfg"},
-                "data": {"tenant": platform.dta.tenantId},
-            },
-        }
+        resource("cfg", {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "cfg"},
+            "data": {"tenant": platform.dta.tenantId},
+            })

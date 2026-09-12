@@ -19,11 +19,9 @@ spec:
   program: |
     def compose(variable, observed):
         platform = read("v1", "ConfigMap", "platform")
-        return {
-            "should-never-exist": {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {"name": "should-never-exist"},
-                "data": {"tenant": require(platform, "data.tenantId")},
-            },
-        }
+        resource("should-never-exist", {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "should-never-exist"},
+            "data": {"tenant": require(platform, "data.tenantId")},
+            })

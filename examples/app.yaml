@@ -74,10 +74,6 @@ spec:
             "metadata": {
                 "name": variable.prefix + "-" + suffix,
                 "annotations": {
-                    # Nothing. The identities are built in a loop and have no
-                    # dependency on each other, so saying so puts them all at
-                    # the same depth instead of in a chain.
-                    "weft.run/needs": "",
                     # The provider needs the fully qualified id to adopt rather
                     # than recreate, and it can only be built once the resource
                     # group has reported its own id.
@@ -102,12 +98,11 @@ spec:
         serviceBus = read("servicebus.azure.m.upbound.io/v1beta1", "ServiceBusNamespace", "sweep-env")
 
         cosmos = read("cosmosdb.azure.m.upbound.io/v1beta1", "Account", "sweep-env")
-        out = {}
 
         rg_id = require(resourceGroup, "status.atProvider.id")
 
         for suffix in IDENTITIES:
-            out["identity-" + suffix] = identity(variable, rg_id, suffix)
+            resource("identity-" + suffix, identity(variable, rg_id, suffix), needs=[])
 
         # Phase two. principalId is written back by the provider minutes after
         # the apply returns, so an identity we just created is exactly as
@@ -138,7 +133,7 @@ spec:
                 pending("status.atProvider.id on " + role.scope)
                 continue
 
-            out["ra-" + role.name] = {
+            resource("ra-" + role.name, {
                 "apiVersion": "authorization.azure.m.upbound.io/v1beta1",
                 "kind": "RoleAssignment",
                 "metadata": {
@@ -158,11 +153,11 @@ spec:
                         "principalId": principal,
                     },
                 },
-            }
+            })
 
         # Note that this never returns wait(). A wait produces no resources at
         # all, so the identities everything else depends on would never be
         # created and the composition could not advance. pending() is the one
         # that says "these are correct, and I am not finished": the identities
         # are applied, and the Weave reports what it is still waiting for.
-        return out
+        return

@@ -47,6 +47,7 @@ func (e *errWaitRaised) Error() string { return e.reason }
 // it from a cache for the duration of a pass.
 func builtins() starlark.StringDict {
 	return starlark.StringDict{
+		"resource":  starlark.NewBuiltin("resource", bResource),
 		"read":      starlark.NewBuiltin("read", bRead),
 		"select":    starlark.NewBuiltin("select", bSelect),
 		"get":       starlark.NewBuiltin("get", bGet),

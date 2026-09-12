@@ -65,9 +65,9 @@ func TestBuildAssignsWavesByPosition(t *testing.T) {
 func TestBuildDerivesWavesFromNeeds(t *testing.T) {
 	items, err := Build([]eval.Resource{
 		{Key: "identity", Object: res("identity")},
-		{Key: "ra-a", Object: needs(res("ra-a"), "identity")},
-		{Key: "ra-b", Object: needs(res("ra-b"), "identity")},
-		{Key: "ra-c", Object: needs(res("ra-c"), "identity")},
+		dependent("ra-a", "identity"),
+		dependent("ra-b", "identity"),
+		dependent("ra-c", "identity"),
 	}, "ns", owner())
 	if err != nil {
 		t.Fatal(err)
@@ -96,7 +96,7 @@ func TestNeedsOverridesThePositionalChain(t *testing.T) {
 		{Key: "base", Object: res("base")},
 		{Key: "long", Object: res("long")},
 		{Key: "winded", Object: res("winded")},
-		{Key: "quick", Object: needs(res("quick"), "base")},
+		dependent("quick", "base"),
 	}, "ns", owner())
 	if err != nil {
 		t.Fatal(err)
@@ -114,12 +114,30 @@ func TestNeedsOverridesThePositionalChain(t *testing.T) {
 	}
 }
 
+// An explicit empty needs says "nothing at all", which is how siblings built in
+// a loop escape being chained to one another by their position.
+func TestDeclaringNoNeedsBreaksTheChain(t *testing.T) {
+	items, err := Build([]eval.Resource{
+		dependent("a"),
+		dependent("b"),
+		dependent("c"),
+	}, "ns", owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, it := range items {
+		if it.Wave != 0 {
+			t.Errorf("%s is wave %d, want them all together at 0", it.Key, it.Wave)
+		}
+	}
+}
+
 // A dependency naming a key the program did not return is a typo, and catching
 // it is the thing a wave number could never do.
 func TestBuildRejectsAnUnknownDependency(t *testing.T) {
 	_, err := Build([]eval.Resource{
 		{Key: "a", Object: res("a")},
-		{Key: "b", Object: needs(res("b"), "idenity")},
+		dependent("b", "idenity"),
 	}, "ns", owner())
 
 	if err == nil || !strings.Contains(err.Error(), "idenity") {
@@ -131,9 +149,9 @@ func TestBuildRejectsAnUnknownDependency(t *testing.T) {
 // apply order that looks fine and is not.
 func TestBuildRejectsADependencyCycle(t *testing.T) {
 	_, err := Build([]eval.Resource{
-		{Key: "a", Object: needs(res("a"), "c")},
-		{Key: "b", Object: needs(res("b"), "a")},
-		{Key: "c", Object: needs(res("c"), "b")},
+		dependent("a", "c"),
+		dependent("b", "a"),
+		dependent("c", "b"),
 	}, "ns", owner())
 
 	if err == nil || !strings.Contains(err.Error(), "cycle") {
@@ -141,20 +159,10 @@ func TestBuildRejectsADependencyCycle(t *testing.T) {
 	}
 }
 
-func TestBuildRejectsSelfDependency(t *testing.T) {
-	_, err := Build([]eval.Resource{
-		{Key: "a", Object: needs(res("a"), "a")},
-	}, "ns", owner())
-
-	if err == nil || !strings.Contains(err.Error(), "itself") {
-		t.Fatalf("err = %v", err)
-	}
-}
-
-func needs(obj map[string]any, deps string) map[string]any {
-	md := obj["metadata"].(map[string]any)
-	md["annotations"] = map[string]any{naming.NeedsAnnotation: deps}
-	return obj
+// dependent builds an evaluated resource that declares what it depends on, the
+// way the evaluator hands one over once a program has wrapped it in resource().
+func dependent(key string, deps ...string) eval.Resource {
+	return eval.Resource{Key: key, Object: res(key), Needs: deps, NeedsDeclared: true}
 }
 
 func entriesOf(items []Item) []v1alpha1.InventoryEntry {

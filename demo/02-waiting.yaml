@@ -26,17 +26,15 @@ spec:
         if not licence:
             return wait("no licence ConfigMap in this namespace yet")
 
-        return {
-            "greeting": {
-                "apiVersion": "v1",
-                "kind": "ConfigMap",
-                "metadata": {"name": "greeting"},
-                "data": {
-                    "tenant": require(tenant, "data.tenantId"),
-                    # A field that will never appear on a ConfigMap, reached
-                    # with get() and a default rather than require(), so its
-                    # absence is a value rather than a wait.
-                    "provisioned": get(tenant, "status.atProvider.id", "not-a-managed-resource"),
-                },
+        resource("greeting", {
+            "apiVersion": "v1",
+            "kind": "ConfigMap",
+            "metadata": {"name": "greeting"},
+            "data": {
+                "tenant": require(tenant, "data.tenantId"),
+                # A field that will never appear on a ConfigMap, reached
+                # with get() and a default rather than require(), so its
+                # absence is a value rather than a wait.
+                "provisioned": get(tenant, "status.atProvider.id", "not-a-managed-resource"),
             },
-        }
+            })
