@@ -13,7 +13,7 @@ import (
 
 // Request is one evaluation.
 type Request struct {
-	// Program is the Starlark source defining compose(variable, observed).
+	// Program is the Starlark source defining compose(variable).
 	Program string
 
 	// Variables is static configuration from spec.variables.
