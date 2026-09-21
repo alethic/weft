@@ -98,10 +98,17 @@ type WeaveSpec struct {
 	// +listType=atomic
 	Variables []Variable `json:"variables,omitempty"`
 
-	// Program is a Starlark program defining
-	// compose(variable, observed), returning a mapping of stable key to
-	// resource. Keys are the inventory identity: renaming a key does not
-	// rename anything, it deletes one resource and creates another.
+	// Program is a Starlark program defining compose(variable), which declares
+	// the resources that should exist by calling resource() on each of them.
+	//
+	// A resource is identified by the apiVersion, kind and name in its own body,
+	// which is the only identity anything outside the program can see. Renaming
+	// one is not a rename: it stops declaring one object and starts declaring
+	// another, so the first is pruned and the second created.
+	//
+	// What a declared object looks like in the cluster now is reached through the
+	// value resource() returned, not through a second parameter, because it is a
+	// fact about that resource rather than a mapping to look it up in.
 	//
 	// +kubebuilder:validation:MinLength=1
 	Program string `json:"program"`
