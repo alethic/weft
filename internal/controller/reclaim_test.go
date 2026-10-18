@@ -28,11 +28,11 @@ def compose(variable):
 	}
 	w := h.weave("stamper")
 
-	if got := cm.Labels[naming.WeaveLabel]; got != "stamper" {
-		t.Errorf("%s = %q", naming.WeaveLabel, got)
+	if got := cm.Labels[naming.V1.WeaveLabel]; got != "stamper" {
+		t.Errorf("%s = %q", naming.V1.WeaveLabel, got)
 	}
-	if got := cm.Annotations[naming.WeaveUIDAnnotation]; got != string(w.UID) {
-		t.Errorf("%s = %q, want the Weave's UID %q", naming.WeaveUIDAnnotation, got, w.UID)
+	if got := cm.Annotations[naming.V1.WeaveUIDAnnotation]; got != string(w.UID) {
+		t.Errorf("%s = %q, want the Weave's UID %q", naming.V1.WeaveUIDAnnotation, got, w.UID)
 	}
 }
 
@@ -45,7 +45,7 @@ func TestUnownedResourceIsReclaimedAfterStatusLoss(t *testing.T) {
 def compose(variable):
     resource({
         "apiVersion": "v1", "kind": "ConfigMap",
-        "metadata": {"name": "keeper", "annotations": {"weft.run/owned": "false"}},
+        "metadata": {"name": "keeper", "annotations": {"weft.alethic.solutions/owned": "false"}},
         "data": {"v": "1"},
         })
 `, "")
@@ -124,10 +124,10 @@ def compose(variable):
 func TestProvenanceFromAnotherWeaveIsNotReclaimed(t *testing.T) {
 	h := newHarness(t, nil)
 	cm := h.configMap("impostor", map[string]string{"owner": "somebody-else"})
-	cm.Labels = map[string]string{naming.WeaveLabel: "claimant"}
+	cm.Labels = map[string]string{naming.V1.WeaveLabel: "claimant"}
 	cm.Annotations = map[string]string{
-		naming.WeaveUIDAnnotation: "thing",
-		naming.WeaveUIDAnnotation: "11111111-1111-1111-1111-111111111111",
+		naming.V1.WeaveUIDAnnotation: "thing",
+		naming.V1.WeaveUIDAnnotation: "11111111-1111-1111-1111-111111111111",
 	}
 	if err := testK8s.Update(h.ctx, cm); err != nil {
 		t.Fatal(err)

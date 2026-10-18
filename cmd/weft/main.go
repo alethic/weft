@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/controller"
 	"github.com/alethic/weft/internal/eval"
@@ -31,6 +32,9 @@ var scheme = runtime.NewScheme()
 
 func init() {
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		panic(err)
+	}
+	if err := weftv1.AddToScheme(scheme); err != nil {
 		panic(err)
 	}
 	if err := v1alpha1.AddToScheme(scheme); err != nil {
@@ -81,7 +85,10 @@ func bindFlags(fs *flag.FlagSet, c *config) {
 	fs.StringVar(&c.metricsAddr, "metrics-bind-address", "0", "Address the metrics endpoint binds to; 0 disables it.")
 	fs.StringVar(&c.probeAddr, "health-probe-bind-address", ":8081", "Address the health probe endpoint binds to.")
 	fs.BoolVar(&c.leaderElect, "leader-elect", false, "Elect a leader so only one replica reconciles.")
-	fs.StringVar(&c.leaderElectID, "leader-election-id", naming.Group, "Name of the leader election lease.")
+	// The lease keeps the name it had before v1 existed. A rolling upgrade has
+	// the old and new replicas contend for one lease; renaming it would let
+	// both lead at once for the length of the rollout.
+	fs.StringVar(&c.leaderElectID, "leader-election-id", naming.Legacy.Group, "Name of the leader election lease.")
 	fs.StringVar(&c.watchNamespace, "namespace", "", "Restrict to a single namespace. Empty watches all of them.")
 
 	fs.StringVar(&c.groups, "impersonate-groups",
@@ -162,7 +169,7 @@ func runManager(args []string) error {
 
 	factory, err := kube.NewFactory(restCfg, mgr.GetRESTMapper(), kube.FactoryOptions{
 		Groups:    parseGroups(cfg.groups),
-		UserAgent: naming.Group + "/" + naming.Version,
+		UserAgent: "weft/" + version.Get().Version,
 	})
 	if err != nil {
 		return fmt.Errorf("building impersonation factory: %w", err)
@@ -174,22 +181,31 @@ func runManager(args []string) error {
 		return fmt.Errorf("registering watch registry: %w", err)
 	}
 
-	reconciler := &controller.WeaveReconciler{
-		Client:    mgr.GetClient(),
-		Scheme:    mgr.GetScheme(),
-		Factory:   factory,
-		Evaluator: eval.NewStarlark(cfg.evalOpt),
-		Watches:   registry,
-		// The newer events API would also change the RBAC this controller
-		// needs, from events in the core group to events.k8s.io, and getting
-		// that wrong makes events silently disappear. Migrating is a change of
-		// its own, not a drive-by.
-		//nolint:staticcheck // SA1019: deliberate; see above.
-		Recorder: mgr.GetEventRecorderFor(naming.Group),
-		Opts:     cfg.opts,
-	}
-	if err := reconciler.SetupWithManager(mgr); err != nil {
-		return fmt.Errorf("registering controller: %w", err)
+	// One reconciler per served group. They share the impersonation factory,
+	// the evaluator's compiled-program cache and the watch registry, so serving
+	// weft.run alongside v1 costs a second work queue and nothing else.
+	evaluator := eval.NewStarlark(cfg.evalOpt)
+	// The newer events API would also change the RBAC this controller needs,
+	// from events in the core group to events.k8s.io, and getting that wrong
+	// makes events silently disappear. Migrating is a change of its own, not a
+	// drive-by.
+	//nolint:staticcheck // SA1019: deliberate; see above.
+	recorder := mgr.GetEventRecorderFor("weft")
+	for _, served := range controller.AllServed {
+		reconciler := &controller.WeaveReconciler{
+			Served:    served,
+			Client:    mgr.GetClient(),
+			APIReader: mgr.GetAPIReader(),
+			Scheme:    mgr.GetScheme(),
+			Factory:   factory,
+			Evaluator: evaluator,
+			Watches:   registry,
+			Recorder:  recorder,
+			Opts:      cfg.opts,
+		}
+		if err := reconciler.SetupWithManager(mgr); err != nil {
+			return fmt.Errorf("registering the %s controller: %w", served.API.GroupVersion, err)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("ping", healthz.Ping); err != nil {
@@ -204,7 +220,7 @@ func runManager(args []string) error {
 
 	log.Info("starting",
 		"build", build.Version, "commit", build.Commit,
-		"group", naming.Group, "apiVersion", naming.Version,
+		"serving", servedVersions(),
 		"impersonateGroups", parseGroups(cfg.groups))
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		return fmt.Errorf("running manager: %w", err)
@@ -224,6 +240,14 @@ func parseGroups(s string) []string {
 		if p = strings.TrimSpace(p); p != "" {
 			out = append(out, p)
 		}
+	}
+	return out
+}
+
+func servedVersions() []string {
+	out := make([]string, 0, len(controller.AllServed))
+	for _, s := range controller.AllServed {
+		out = append(out, s.API.GroupVersion)
 	}
 	return out
 }

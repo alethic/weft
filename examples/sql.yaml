@@ -7,7 +7,7 @@
 # forever and re-applied the same grants. With a real watch it collapses into a
 # single Job keyed off the identity's generation: it runs when the identity
 # actually changes, and not otherwise.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1
 kind: Weave
 metadata:
   name: sql

@@ -6,7 +6,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/naming"
 )
 
@@ -136,9 +136,9 @@ func TestReadIsDeniedWithoutPermission(t *testing.T) {
 	h := newHarness(t, nil)
 	h.configMap("classified", map[string]string{"secret": "yes"})
 
-	w := &v1alpha1.Weave{
+	w := &weftv1.Weave{
 		ObjectMeta: metav1.ObjectMeta{Name: "nosy", Namespace: h.namespace},
-		Spec: v1alpha1.WeaveSpec{
+		Spec: weftv1.WeaveSpec{
 			ServiceAccountName: "powerless",
 			Program: `
 def compose(variable):
@@ -225,7 +225,7 @@ def compose(variable):
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := naming.HeldFinalizer(h.namespace, "holder")
+	want := naming.V1.HeldFinalizer(h.namespace, "holder")
 	if !hasFinalizer(upstream.Finalizers, want) {
 		t.Errorf("finalizers = %v, want %q", upstream.Finalizers, want)
 	}
@@ -265,12 +265,12 @@ def compose(variable):
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hasFinalizer(upstream.Finalizers, naming.HeldFinalizer(h.namespace, "relaxing")) {
+	if hasFinalizer(upstream.Finalizers, naming.V1.HeldFinalizer(h.namespace, "relaxing")) {
 		t.Errorf("finalizer still on the object: %v", upstream.Finalizers)
 	}
 }
 
-func hasRead(reads []v1alpha1.ReadRef, apiVersion, kind string) bool {
+func hasRead(reads []weftv1.ReadRef, apiVersion, kind string) bool {
 	for _, r := range reads {
 		if r.APIVersion == apiVersion && r.Kind == kind {
 			return true

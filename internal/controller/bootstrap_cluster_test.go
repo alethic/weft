@@ -21,6 +21,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/yaml"
 
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/naming"
 )
@@ -49,6 +50,7 @@ func TestMain(m *testing.M) {
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
 		clientgoscheme.AddToScheme,
+		weftv1.AddToScheme,
 		v1alpha1.AddToScheme,
 		apiextensionsv1.AddToScheme,
 	} {
@@ -68,25 +70,32 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 
-	installed, err := installCRD(context.Background())
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "installing the CRD: %v\n", err)
-		os.Exit(1)
+	var installed []naming.API
+	for _, api := range naming.APIs {
+		ok, err := installCRD(context.Background(), api)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "installing the %s CRD: %v\n", api.Group, err)
+			os.Exit(1)
+		}
+		if ok {
+			installed = append(installed, api)
+		}
 	}
 
 	code := m.Run()
 
-	// Only remove the CRD if this run installed it. Deleting one that was
+	// Only remove a CRD if this run installed it. Deleting one that was
 	// already there would take every Weave in the cluster with it.
-	if installed {
-		removeCRD(context.Background())
+	for _, api := range installed {
+		removeCRD(context.Background(), api)
 	}
 	os.Exit(code)
 }
 
-// installCRD applies the generated CRD, reporting whether it had to create it.
-func installCRD(ctx context.Context) (bool, error) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "config", "crd", naming.Group+"_"+naming.Plural+".yaml"))
+// installCRD applies one group's generated CRD, reporting whether it had to
+// create it.
+func installCRD(ctx context.Context, api naming.API) (bool, error) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "config", "crd", api.Group+"_"+naming.Plural+".yaml"))
 	if err != nil {
 		return false, err
 	}
@@ -110,8 +119,13 @@ func installCRD(ctx context.Context) (bool, error) {
 	// The API server needs a moment before the new type is servable.
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		var list v1alpha1.WeaveList
-		if err := testK8s.List(ctx, &list); err == nil {
+		var err error
+		if api.Group == naming.Legacy.Group {
+			err = testK8s.List(ctx, &v1alpha1.WeaveList{})
+		} else {
+			err = testK8s.List(ctx, &weftv1.WeaveList{})
+		}
+		if err == nil {
 			return true, nil
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -119,9 +133,9 @@ func installCRD(ctx context.Context) (bool, error) {
 	return true, fmt.Errorf("the CRD did not become servable in time")
 }
 
-func removeCRD(ctx context.Context) {
+func removeCRD(ctx context.Context, api naming.API) {
 	crd := &apiextensionsv1.CustomResourceDefinition{}
-	crd.Name = naming.CRDName
+	crd.Name = api.CRDName
 	if err := testK8s.Delete(ctx, crd); err != nil && !apierrors.IsNotFound(err) {
 		fmt.Fprintf(os.Stderr, "removing the CRD: %v\n", err)
 	}

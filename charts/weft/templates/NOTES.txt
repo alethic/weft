@@ -22,6 +22,11 @@ write its outputs. Weft tells them exactly what is missing, in commands they can
 
   kubectl describe weave <name>
 
+weft.run/v1alpha1 Weaves, from before weft.alethic.solutions/v1, are served too.
+With both installed, name the group to be sure which you get:
+weaves.weft.alethic.solutions or weaves.weft.run. See docs/migrating.md for
+moving them across.
+
 To try it:
 
   kubectl create serviceaccount composer

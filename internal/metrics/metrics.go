@@ -26,7 +26,7 @@ var (
 			Name:      "weave_status",
 			Help:      "Current status of a Weave, as one series per state with a value of 0 or 1.",
 		},
-		[]string{"namespace", "name", "state"},
+		[]string{"group", "namespace", "name", "state"},
 	)
 
 	// WeaveResources is how many resources each Weave currently owns. A count
@@ -37,7 +37,7 @@ var (
 			Name:      "weave_resources",
 			Help:      "Number of resources a Weave currently owns.",
 		},
-		[]string{"namespace", "name"},
+		[]string{"group", "namespace", "name"},
 	)
 
 	// EvaluationDuration is how long compose() takes. Evaluation is
@@ -49,7 +49,7 @@ var (
 			Help:      "Time spent evaluating a composition program.",
 			Buckets:   []float64{0.001, 0.005, 0.01, 0.05, 0.1, 0.5, 1, 5},
 		},
-		[]string{"namespace", "name"},
+		[]string{"group", "namespace", "name"},
 	)
 
 	// EvaluationsTotal counts evaluations by outcome. The three outcomes are
@@ -150,25 +150,30 @@ func init() {
 	)
 }
 
+// Per-Weave series carry the Weave's API group. A weft.run Weave and a v1 Weave
+// may share a namespace and name - that is exactly the state a handover passes
+// through - and without the group one would overwrite the other's series and
+// forgetting one would erase both.
+
 // SetWeaveState records a Weave's condition, zeroing the states it is not in so
 // a Weave never appears to be in two at once.
-func SetWeaveState(namespace, name, state string) {
+func SetWeaveState(group, namespace, name, state string) {
 	for _, s := range []string{StateReady, StateWaiting, StateDegraded} {
 		v := 0.0
 		if s == state {
 			v = 1.0
 		}
-		WeaveStatus.WithLabelValues(namespace, name, s).Set(v)
+		WeaveStatus.WithLabelValues(group, namespace, name, s).Set(v)
 	}
 }
 
 // ForgetWeave drops every series for a deleted Weave. Without this the gauges
 // keep reporting objects that no longer exist, and the cardinality only ever
 // grows.
-func ForgetWeave(namespace, name string) {
+func ForgetWeave(group, namespace, name string) {
 	for _, s := range []string{StateReady, StateWaiting, StateDegraded} {
-		WeaveStatus.DeleteLabelValues(namespace, name, s)
+		WeaveStatus.DeleteLabelValues(group, namespace, name, s)
 	}
-	WeaveResources.DeleteLabelValues(namespace, name)
-	EvaluationDuration.DeleteLabelValues(namespace, name)
+	WeaveResources.DeleteLabelValues(group, namespace, name)
+	EvaluationDuration.DeleteLabelValues(group, namespace, name)
 }

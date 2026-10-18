@@ -15,7 +15,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/kube"
@@ -23,13 +23,13 @@ import (
 	"github.com/alethic/weft/internal/variables"
 )
 
-func load(t *testing.T, path string) *v1alpha1.Weave {
+func load(t *testing.T, path string) *weftv1.Weave {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("reading %s: %v", path, err)
 	}
-	var w v1alpha1.Weave
+	var w weftv1.Weave
 	if err := yaml.Unmarshal(data, &w); err != nil {
 		t.Fatalf("parsing %s: %v", path, err)
 	}
@@ -102,8 +102,8 @@ func TestExamplesAreWellFormed(t *testing.T) {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			w := load(t, path)
 
-			if w.APIVersion != naming.GroupVersion {
-				t.Errorf("apiVersion = %q, want %q", w.APIVersion, naming.GroupVersion)
+			if w.APIVersion != naming.V1.GroupVersion {
+				t.Errorf("apiVersion = %q, want %q", w.APIVersion, naming.V1.GroupVersion)
 			}
 			if w.Kind != naming.Kind {
 				t.Errorf("kind = %q, want %q", w.Kind, naming.Kind)
@@ -190,10 +190,9 @@ func TestExamplesProduceTheirFirstWave(t *testing.T) {
 			// Whatever it produced must survive normalisation, which is where
 			// namespace, ownership and wave rules are enforced.
 			owner := kube.Owner{
-				APIVersion: naming.GroupVersion,
-				Kind:       naming.Kind,
-				Name:       w.Name,
-				UID:        "test-uid",
+				API:  naming.V1,
+				Name: w.Name,
+				UID:  "test-uid",
 			}
 			items, err := inventory.Build(res.Resources, w.Namespace, owner)
 			if err != nil {

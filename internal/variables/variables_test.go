@@ -6,7 +6,7 @@ import (
 
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 )
 
 func TestMergeLaterEntryWins(t *testing.T) {
@@ -91,14 +91,14 @@ func TestMergeWithNothingOver(t *testing.T) {
 	}
 }
 
-func values(raw string) v1alpha1.Variable {
-	return v1alpha1.Variable{Values: &apiextensionsv1.JSON{Raw: []byte(raw)}}
+func values(raw string) weftv1.Variable {
+	return weftv1.Variable{Values: &apiextensionsv1.JSON{Raw: []byte(raw)}}
 }
 
 func TestInlineMergesOnlyWrittenEntries(t *testing.T) {
-	got := Inline([]v1alpha1.Variable{
+	got := Inline([]weftv1.Variable{
 		values(`{"a": "first", "shared": "first"}`),
-		{ConfigMap: &v1alpha1.VariableRef{Name: "ignored-without-a-cluster"}},
+		{ConfigMap: &weftv1.VariableRef{Name: "ignored-without-a-cluster"}},
 		values(`{"b": "second", "shared": "second"}`),
 	})
 
@@ -111,7 +111,7 @@ func TestInlineMergesOnlyWrittenEntries(t *testing.T) {
 // Integers have to survive, or a replica count reaches a program as a float and
 // comes back out as one.
 func TestInlineKeepsTypes(t *testing.T) {
-	got := Inline([]v1alpha1.Variable{values(`{"replicas": 3, "debug": true}`)})
+	got := Inline([]weftv1.Variable{values(`{"replicas": 3, "debug": true}`)})
 	if r, ok := got["replicas"].(int64); !ok || r != 3 {
 		t.Errorf("replicas = %#v, want int64(3)", got["replicas"])
 	}

@@ -38,14 +38,21 @@ annotations:
   artifacthub.io/operatorCapabilities: Basic Install
   artifacthub.io/crds: |
     - kind: Weave
-      version: v1alpha1
-      name: weaves.weft.run
+      version: v1
+      name: weaves.weft.alethic.solutions
       displayName: Weave
       description: |
         Reads existing resources in its namespace and generates others from
         them, applying everything as the ServiceAccount it names.
+    - kind: Weave
+      version: v1alpha1
+      name: weaves.weft.run
+      displayName: Weave (weft.run, legacy)
+      description: |
+        The group Weft was first deployed under, served alongside v1 with the
+        same schema so existing Weaves can be moved across one at a time.
   artifacthub.io/crdsExamples: |
-    - apiVersion: weft.run/v1alpha1
+    - apiVersion: weft.alethic.solutions/v1
       kind: Weave
       metadata:
         name: app

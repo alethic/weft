@@ -335,7 +335,9 @@ jobs:
         run: |
           set -euo pipefail
           version='${{ steps.version.outputs.value }}'
-          sed -i "s|^  digest: .*|  digest: \"${DIGEST}\"|" charts/weft/values.yaml
+          # In a file rather than values.yaml, so helm upgrade --reuse-values
+          # cannot carry a previous release's digest over this one.
+          printf '%s' "${DIGEST}" > charts/weft/files/image-digest
           helm package charts/weft --destination dist \
             --version "$version" --app-version "$version"
           helm push dist/weft-*.tgz "oci://${CHARTS}" 2>&1 | tee push.log

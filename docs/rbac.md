@@ -198,11 +198,11 @@ kubectl -n weft-system exec deploy/weft -- /weft reap
 The image is distroless and has no shell, but this execs the binary directly so
 it needs none. Running the binary locally against your kubecontext works too.
 
-Anything missed carries a finalizer beginning `weft.run/src-`, which is a fixed
+Anything missed carries a finalizer beginning `weft.alethic.solutions/src-`, which is a fixed
 prefix precisely so a human can find them:
 
 ```bash
 kubectl get <kind> -A -o json \
-  | jq -r '.items[] | select(.metadata.finalizers[]? | startswith("weft.run/src-"))
+  | jq -r '.items[] | select(.metadata.finalizers[]? | startswith("weft.alethic.solutions/src-"))
            | "\(.metadata.namespace)/\(.metadata.name)"'
 ```

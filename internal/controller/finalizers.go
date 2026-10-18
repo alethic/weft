@@ -10,9 +10,8 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/kube"
-	"github.com/alethic/weft/internal/naming"
 )
 
 // Holds are the opt-in finalizers a program asks for with
@@ -39,7 +38,7 @@ import (
 // it and re-apply everything that was just torn down. That recreated output
 // would then outlive the resource entirely, orphaned, which is precisely the
 // failure this feature exists to prevent.
-func (r *WeaveReconciler) checkHolds(ctx context.Context, c *kube.Client, rd *weaveReader, weave *v1alpha1.Weave) error {
+func (r *WeaveReconciler) checkHolds(ctx context.Context, c *kube.Client, rd *weaveReader, weave *weftv1.Weave) error {
 	for i := range weave.Status.Held {
 		held := weave.Status.Held[i]
 		gvk, err := parseGVK(held.APIVersion, held.Kind)
@@ -68,7 +67,7 @@ func (r *WeaveReconciler) checkHolds(ctx context.Context, c *kube.Client, rd *we
 // reconcileHolds settles status.held against what the program asked for on this
 // pass: places what is new, releases what is no longer wanted, and stops the
 // pass if anything it asked to hold is already deleting.
-func (r *WeaveReconciler) reconcileHolds(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, requested, deleting []v1alpha1.HeldResource) error {
+func (r *WeaveReconciler) reconcileHolds(ctx context.Context, c *kube.Client, weave *weftv1.Weave, requested, deleting []weftv1.HeldResource) error {
 	log := logf.FromContext(ctx)
 
 	// Release first. A program that moved a hold from one object to another
@@ -83,7 +82,7 @@ func (r *WeaveReconciler) reconcileHolds(ctx context.Context, c *kube.Client, we
 		log.Info("released hold", "kind", existing.Kind, "name", existing.Name)
 	}
 
-	kept := make([]v1alpha1.HeldResource, 0, len(requested))
+	kept := make([]weftv1.HeldResource, 0, len(requested))
 	for _, want := range requested {
 		gvk, err := parseGVK(want.APIVersion, want.Kind)
 		if err != nil {
@@ -110,7 +109,7 @@ func (r *WeaveReconciler) reconcileHolds(ctx context.Context, c *kube.Client, we
 				gvk.Kind, want.Name, perm.Summary(), perm.Fix())
 		}
 
-		added, err := c.MutateFinalizers(ctx, gvk, want.Name, addFinalizer(naming.HeldFinalizer(weave.Namespace, weave.Name)))
+		added, err := c.MutateFinalizers(ctx, gvk, want.Name, addFinalizer(r.Served.API.HeldFinalizer(weave.Namespace, weave.Name)))
 		if err != nil {
 			return holdError(gvk, want.Name, err)
 		}
@@ -141,8 +140,8 @@ func (r *WeaveReconciler) reconcileHolds(ctx context.Context, c *kube.Client, we
 func (r *WeaveReconciler) tearDownForHold(
 	ctx context.Context,
 	c *kube.Client,
-	weave *v1alpha1.Weave,
-	held *v1alpha1.HeldResource,
+	weave *weftv1.Weave,
+	held *weftv1.HeldResource,
 	gvk schema.GroupVersionKind,
 ) error {
 	log := logf.FromContext(ctx)
@@ -177,7 +176,7 @@ func (r *WeaveReconciler) tearDownForHold(
 	}
 
 	released := *held
-	if _, err := c.MutateFinalizers(ctx, gvk, held.Name, removeFinalizer(naming.HeldFinalizer(weave.Namespace, weave.Name))); err != nil {
+	if _, err := c.MutateFinalizers(ctx, gvk, held.Name, removeFinalizer(r.Served.API.HeldFinalizer(weave.Namespace, weave.Name))); err != nil {
 		if !apierrors.IsNotFound(err) {
 			return holdError(gvk, held.Name, err)
 		}
@@ -192,7 +191,7 @@ func (r *WeaveReconciler) tearDownForHold(
 
 // releaseAllHolds lifts every finalizer this Weave placed. Used when the Weave
 // itself is going away.
-func (r *WeaveReconciler) releaseAllHolds(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) error {
+func (r *WeaveReconciler) releaseAllHolds(ctx context.Context, c *kube.Client, weave *weftv1.Weave) error {
 	for _, held := range weave.Status.Held {
 		if err := r.releaseHold(ctx, c, weave, held); err != nil {
 			return err
@@ -202,13 +201,13 @@ func (r *WeaveReconciler) releaseAllHolds(ctx context.Context, c *kube.Client, w
 	return nil
 }
 
-func (r *WeaveReconciler) releaseHold(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, held v1alpha1.HeldResource) error {
+func (r *WeaveReconciler) releaseHold(ctx context.Context, c *kube.Client, weave *weftv1.Weave, held weftv1.HeldResource) error {
 	gvk, err := parseGVK(held.APIVersion, held.Kind)
 	if err != nil {
 		// An unparseable reference cannot have been finalized in the first place.
 		return nil
 	}
-	_, err = c.MutateFinalizers(ctx, gvk, held.Name, removeFinalizer(naming.HeldFinalizer(weave.Namespace, weave.Name)))
+	_, err = c.MutateFinalizers(ctx, gvk, held.Name, removeFinalizer(r.Served.API.HeldFinalizer(weave.Namespace, weave.Name)))
 	switch {
 	case err == nil, apierrors.IsNotFound(err):
 		return nil
@@ -234,7 +233,7 @@ func holdError(gvk schema.GroupVersionKind, name string, err error) error {
 	return fmt.Errorf("updating finalizers on %s %q: %w", gvk.Kind, name, err)
 }
 
-func containsHold(list []v1alpha1.HeldResource, want v1alpha1.HeldResource) bool {
+func containsHold(list []weftv1.HeldResource, want weftv1.HeldResource) bool {
 	for _, h := range list {
 		if h.APIVersion == want.APIVersion && h.Kind == want.Kind && h.Name == want.Name {
 			return true
@@ -243,8 +242,8 @@ func containsHold(list []v1alpha1.HeldResource, want v1alpha1.HeldResource) bool
 	return false
 }
 
-func withoutHold(list []v1alpha1.HeldResource, drop v1alpha1.HeldResource) []v1alpha1.HeldResource {
-	out := make([]v1alpha1.HeldResource, 0, len(list))
+func withoutHold(list []weftv1.HeldResource, drop weftv1.HeldResource) []weftv1.HeldResource {
+	out := make([]weftv1.HeldResource, 0, len(list))
 	for _, h := range list {
 		if h.APIVersion == drop.APIVersion && h.Kind == drop.Kind && h.Name == drop.Name {
 			continue

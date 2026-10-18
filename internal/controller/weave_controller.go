@@ -13,13 +13,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -28,7 +28,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/kube"
@@ -113,12 +113,25 @@ func (o *Options) applyDefaults() {
 	}
 }
 
-// WeaveReconciler reconciles Weave objects.
+// WeaveReconciler reconciles the Weave objects of one API group.
+//
+// One is registered per served group. They share the Factory, the evaluator
+// and the watch registry, and differ only in Served: which type they read and
+// write, and which keys they put on what they manage.
 type WeaveReconciler struct {
+	// Served is the group this reconciler handles. Zero means v1.
+	Served Served
+
 	// Client reads and writes Weave objects with the controller's own
 	// identity. It is used for nothing else: every resource a composition
 	// touches goes through the impersonated Factory instead.
 	Client client.Client
+
+	// APIReader reads straight from the API server, bypassing the cache. It is
+	// used where a stale answer would be destructive: whether a Weave in
+	// another group exists decides between handing resources over and tearing
+	// them down. Nil means Client.
+	APIReader client.Reader
 
 	Scheme    *runtime.Scheme
 	Factory   *kube.Factory
@@ -131,17 +144,26 @@ type WeaveReconciler struct {
 // SetupWithManager registers the controller.
 func (r *WeaveReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.Opts.applyDefaults()
+	if r.Served.New == nil {
+		r.Served = ServedV1
+	}
 	if r.Evaluator == nil {
 		r.Evaluator = eval.NewStarlark(eval.Options{})
 	}
+	// Controller names must be unique within a manager, and they label
+	// controller-runtime's own metrics. The current group has the plain name.
+	name := "weave"
+	if r.Served.API.Group != ServedV1.API.Group {
+		name = "weave-" + strings.ReplaceAll(r.Served.API.Group, ".", "-")
+	}
 	return ctrl.NewControllerManagedBy(mgr).
-		Named("weave").
-		For(&v1alpha1.Weave{}).
+		Named(name).
+		For(r.Served.New()).
 		// Everything a composition observes arrives through the registry's
 		// channel rather than through a statically declared watch, because the
 		// set of types to watch is whatever the Weaves in the cluster happen to
 		// declare, and it changes as they are edited.
-		WatchesRawSource(source.Channel(r.Watches.Events(), &handler.EnqueueRequestForObject{})).
+		WatchesRawSource(source.Channel(r.Watches.Events(r.Served.API.Group), &handler.EnqueueRequestForObject{})).
 		Complete(r)
 }
 
@@ -162,6 +184,11 @@ func (r *WeaveReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // impersonate on groups is pinned to two names. Granting it unrestricted would
 // let anyone who compromised the controller impersonate system:masters.
 //
+// Both served groups need the same three rules.
+//
+// +kubebuilder:rbac:groups=weft.alethic.solutions,resources=weaves,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=weft.alethic.solutions,resources=weaves/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=weft.alethic.solutions,resources=weaves/finalizers,verbs=update
 // +kubebuilder:rbac:groups=weft.run,resources=weaves,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=weft.run,resources=weaves/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=weft.run,resources=weaves/finalizers,verbs=update
@@ -171,28 +198,29 @@ func (r *WeaveReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 // Reconcile brings one Weave's resources in line with its program.
 func (r *WeaveReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	var weave v1alpha1.Weave
-	if err := r.Client.Get(ctx, req.NamespacedName, &weave); err != nil {
+	obj := r.Served.New()
+	if err := r.Client.Get(ctx, req.NamespacedName, obj); err != nil {
 		if apierrors.IsNotFound(err) {
-			r.Watches.Release(req.NamespacedName)
+			r.Watches.Release(r.watchRef(req.Namespace, req.Name))
 			// Drop the gauges too, or they keep reporting a Weave that no
 			// longer exists and the cardinality only ever grows.
-			metrics.ForgetWeave(req.Namespace, req.Name)
+			metrics.ForgetWeave(r.Served.API.Group, req.Namespace, req.Name)
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
+	weave := r.Served.ToV1(obj)
 
 	if !weave.DeletionTimestamp.IsZero() {
-		return r.reconcileDeletion(ctx, &weave)
+		return r.reconcileDeletion(ctx, weave)
 	}
 
-	if !controllerutil.ContainsFinalizer(&weave, naming.WeaveFinalizer) {
+	if !controllerutil.ContainsFinalizer(weave, r.Served.API.WeaveFinalizer) {
 		// The finalizer is what buys the chance to tear resources down in
 		// order. Without it, deleting a Weave hands everything to cascading
 		// collection at once.
-		controllerutil.AddFinalizer(&weave, naming.WeaveFinalizer)
-		if err := r.Client.Update(ctx, &weave); err != nil {
+		controllerutil.AddFinalizer(weave, r.Served.API.WeaveFinalizer)
+		if err := r.update(ctx, weave); err != nil {
 			return ctrl.Result{}, err
 		}
 		// The update re-triggers this reconcile; nothing more to do here.
@@ -200,12 +228,12 @@ func (r *WeaveReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	before := weave.DeepCopy()
-	result, err := r.reconcileActive(ctx, &weave)
+	result, err := r.reconcileActive(ctx, weave)
 
 	// Status is written on every path. A Weave that cannot be reconciled has
 	// to say why on itself, because the alternative is what this replaces:
 	// errors that land in a Job log and on no object at all.
-	if serr := r.writeStatus(ctx, before, &weave); serr != nil {
+	if serr := r.writeStatus(ctx, before, weave); serr != nil {
 		if err == nil {
 			return ctrl.Result{}, serr
 		}
@@ -215,8 +243,8 @@ func (r *WeaveReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 }
 
 // reconcileActive is the steady-state path.
-func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.Weave) (ctrl.Result, error) {
-	c, err := r.Factory.For(weave.Namespace, weave.Spec.ServiceAccountName)
+func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *weftv1.Weave) (ctrl.Result, error) {
+	c, err := r.Factory.For(r.Served.API, weave.Namespace, weave.Spec.ServiceAccountName)
 	if err != nil {
 		markDegraded(weave, ReasonInvalidSpec, err.Error())
 		return ctrl.Result{RequeueAfter: r.Opts.DegradedRetry}, nil
@@ -224,8 +252,7 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 
 	// Register watches before doing any work, so that a Weave which is about to
 	// stop with "the ResourceGroup does not exist" still wakes up when it does.
-	report, werr := r.Watches.Ensure(
-		types.NamespacedName{Namespace: weave.Namespace, Name: weave.Name}, c, watchKeys(weave))
+	report, werr := r.Watches.Ensure(r.watchRef(weave.Namespace, weave.Name), c, watchKeys(weave))
 	if werr != nil && !errors.Is(werr, watches.ErrNotStarted) {
 		return ctrl.Result{}, werr
 	}
@@ -244,11 +271,11 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 			switch h.kind {
 			case haltWaiting:
 				markWaiting(weave, h.reason, h.message)
-				metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateWaiting)
+				metrics.SetWeaveState(r.Served.API.Group, weave.Namespace, weave.Name, metrics.StateWaiting)
 				return ctrl.Result{RequeueAfter: requeue}, nil
 			case haltDegraded:
 				markDegraded(weave, h.reason, h.message)
-				metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateDegraded)
+				metrics.SetWeaveState(r.Served.API.Group, weave.Namespace, weave.Name, metrics.StateDegraded)
 				r.eventf(weave, "Warning", h.reason, "%s", firstLine(h.message))
 				return ctrl.Result{RequeueAfter: r.Opts.DegradedRetry}, nil
 			}
@@ -266,12 +293,12 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 	// Resources were applied, but the program said it is not finished. Ready
 	// would be a lie here: the point of staging is that half the composition
 	// does not exist yet.
-	metrics.WeaveResources.WithLabelValues(weave.Namespace, weave.Name).Set(float64(len(weave.Status.Inventory)))
+	metrics.WeaveResources.WithLabelValues(r.Served.API.Group, weave.Namespace, weave.Name).Set(float64(len(weave.Status.Inventory)))
 
 	if len(pass.pending) > 0 {
 		markWaiting(weave, ReasonFieldUnresolved,
 			pass.summary+"; still waiting for "+joinWithAnd(pass.pending))
-		metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateWaiting)
+		metrics.SetWeaveState(r.Served.API.Group, weave.Namespace, weave.Name, metrics.StateWaiting)
 		if report.Degraded() {
 			setCondition(weave, naming.ConditionDegraded, metav1.ConditionTrue, ReasonWatchDegraded,
 				watchFailureMessage(report))
@@ -284,12 +311,12 @@ func (r *WeaveReconciler) reconcileActive(ctx context.Context, weave *v1alpha1.W
 		setCondition(weave, naming.ConditionWaiting, metav1.ConditionFalse, ReasonApplied, "nothing outstanding")
 		setCondition(weave, naming.ConditionDegraded, metav1.ConditionTrue, ReasonWatchDegraded,
 			watchFailureMessage(report))
-		metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateDegraded)
+		metrics.SetWeaveState(r.Served.API.Group, weave.Namespace, weave.Name, metrics.StateDegraded)
 		return ctrl.Result{RequeueAfter: requeue}, nil
 	}
 
 	markReady(weave, pass.summary)
-	metrics.SetWeaveState(weave.Namespace, weave.Name, metrics.StateReady)
+	metrics.SetWeaveState(r.Served.API.Group, weave.Namespace, weave.Name, metrics.StateReady)
 	return ctrl.Result{RequeueAfter: requeue}, nil
 }
 
@@ -306,7 +333,7 @@ type pass struct {
 }
 
 // compose runs one full pass.
-func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (pass, error) {
+func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *weftv1.Weave) (pass, error) {
 	// One reader for the whole pass. Every read the controller and the program
 	// make goes through it, so they share a cache and the recording covers both.
 	rd := newWeaveReader(c, weave)
@@ -339,7 +366,7 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 		Reader:    rd,
 		Observed:  observed,
 	})
-	metrics.EvaluationDuration.WithLabelValues(weave.Namespace, weave.Name).
+	metrics.EvaluationDuration.WithLabelValues(r.Served.API.Group, weave.Namespace, weave.Name).
 		Observe(time.Since(started).Seconds())
 	if err != nil {
 		metrics.EvaluationsTotal.WithLabelValues(metrics.OutcomeFailed).Inc()
@@ -366,10 +393,9 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 	metrics.EvaluationsTotal.WithLabelValues(metrics.OutcomeResolved).Inc()
 
 	owner := kube.Owner{
-		APIVersion: naming.GroupVersion,
-		Kind:       naming.Kind,
-		Name:       weave.Name,
-		UID:        weave.UID,
+		API:  r.Served.API,
+		Name: weave.Name,
+		UID:  weave.UID,
 	}
 	items, err := inventory.Build(res.Resources, weave.Namespace, owner)
 	if err != nil {
@@ -420,16 +446,16 @@ func (r *WeaveReconciler) compose(ctx context.Context, c *kube.Client, weave *v1
 
 // reconcileDeletion tears resources down in reverse dependency order before
 // letting the Weave go.
-func (r *WeaveReconciler) reconcileDeletion(ctx context.Context, weave *v1alpha1.Weave) (ctrl.Result, error) {
+func (r *WeaveReconciler) reconcileDeletion(ctx context.Context, weave *weftv1.Weave) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
-	key := types.NamespacedName{Namespace: weave.Namespace, Name: weave.Name}
+	key := r.watchRef(weave.Namespace, weave.Name)
 
-	if !controllerutil.ContainsFinalizer(weave, naming.WeaveFinalizer) {
+	if !controllerutil.ContainsFinalizer(weave, r.Served.API.WeaveFinalizer) {
 		r.Watches.Release(key)
 		return ctrl.Result{}, nil
 	}
 
-	c, err := r.Factory.For(weave.Namespace, weave.Spec.ServiceAccountName)
+	c, err := r.Factory.For(r.Served.API, weave.Namespace, weave.Spec.ServiceAccountName)
 	if err != nil {
 		// Nothing can be torn down in order without a client. Releasing is
 		// better than wedging: cascading collection still removes everything,
@@ -453,6 +479,15 @@ func (r *WeaveReconciler) reconcileDeletion(ctx context.Context, weave *v1alpha1
 			log.Error(err, "releasing source finalizers")
 		}
 		return r.finishDeletion(ctx, weave, key)
+	}
+
+	// The same Weave already exists in the group that supersedes this one.
+	// This is a move, not a removal - what deploying tools do when a manifest's
+	// apiVersion changes, since they create the new object and then delete the
+	// old one, and none of them can pass --cascade=orphan for it. Tearing down
+	// here would delete everything only for the successor to recreate it.
+	if handed, res, err := r.handOffToSuccessor(ctx, c, weave, key); handed {
+		return res, err
 	}
 
 	// An unowned resource outlives its composition, and the Weave being deleted
@@ -520,27 +555,114 @@ func (r *WeaveReconciler) reconcileDeletion(ctx context.Context, weave *v1alpha1
 	return r.finishDeletion(ctx, weave, key)
 }
 
-func (r *WeaveReconciler) finishDeletion(ctx context.Context, weave *v1alpha1.Weave, key types.NamespacedName) (ctrl.Result, error) {
-	controllerutil.RemoveFinalizer(weave, naming.WeaveFinalizer)
-	if err := r.Client.Update(ctx, weave); err != nil {
+func (r *WeaveReconciler) finishDeletion(ctx context.Context, weave *weftv1.Weave, key watches.Weave) (ctrl.Result, error) {
+	controllerutil.RemoveFinalizer(weave, r.Served.API.WeaveFinalizer)
+	if err := r.update(ctx, weave); err != nil {
 		if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 	r.Watches.Release(key)
-	metrics.ForgetWeave(weave.Namespace, weave.Name)
+	metrics.ForgetWeave(r.Served.API.Group, weave.Namespace, weave.Name)
 	return ctrl.Result{}, nil
+}
+
+// handOffToSuccessor lets a deleting Weave go without tearing anything down,
+// when a Weave of the same name exists in the group that supersedes this one.
+// It reports whether it handled the deletion.
+//
+// Letting go means making sure nothing deletes what it made: the owner
+// references it placed are removed first, so the garbage collector has nothing
+// to collect once the finalizer is released. The successor then takes each
+// object over as its program declares it; see handOver.
+//
+// A failure here never falls back to teardown. The successor exists, so
+// teardown is the one outcome that is certainly wrong.
+func (r *WeaveReconciler) handOffToSuccessor(ctx context.Context, c *kube.Client, weave *weftv1.Weave, key watches.Weave) (bool, ctrl.Result, error) {
+	succ, ok := r.Served.API.Successor()
+	if !ok {
+		return false, ctrl.Result{}, nil
+	}
+	exists, deleting, err := r.weaveExists(ctx, succ, weave.Namespace, weave.Name)
+	if err != nil {
+		// Unknown is not "absent". Retrying is cheap; guessing wrong is not.
+		return true, ctrl.Result{}, fmt.Errorf("checking for a %s Weave %q: %w", succ.GroupVersion, weave.Name, err)
+	}
+	if !exists || deleting {
+		return false, ctrl.Result{}, nil
+	}
+
+	log := logf.FromContext(ctx)
+	for _, e := range weave.Status.Inventory {
+		if !e.Owned {
+			continue
+		}
+		gvk, err := inventory.GroupVersionKind(e)
+		if err != nil {
+			continue
+		}
+		if err := c.RemoveOwnerReference(ctx, gvk, e.Name, weave.UID); err != nil && !apierrors.IsNotFound(err) {
+			var perm *kube.PermissionError
+			if errors.As(err, &perm) {
+				before := weave.DeepCopy()
+				markDegraded(weave, ReasonForbidden, fmt.Sprintf(
+					"handing %s %q to the %s Weave of the same name needs permission to update it:\n%s",
+					e.Kind, e.Name, succ.GroupVersion, perm.Error()))
+				if serr := r.writeStatus(ctx, before, weave); serr != nil {
+					log.Error(serr, "writing status during handover")
+				}
+				return true, ctrl.Result{RequeueAfter: r.Opts.DegradedRetry}, nil
+			}
+			return true, ctrl.Result{}, fmt.Errorf("releasing %s %q for handover: %w", e.Kind, e.Name, err)
+		}
+	}
+
+	if err := r.releaseAllHolds(ctx, c, weave); err != nil {
+		log.Error(err, "releasing source finalizers during handover")
+	}
+
+	log.Info("handing resources to the successor rather than tearing them down",
+		"successor", succ.GroupVersion, "resources", len(weave.Status.Inventory))
+	r.eventf(weave, "Normal", "HandingOver",
+		"left %d resources in place for the %s Weave %q, which takes them over",
+		len(weave.Status.Inventory), succ.GroupVersion, weave.Name)
+	res, err := r.finishDeletion(ctx, weave, key)
+	return true, res, err
+}
+
+// reader is the uncached reader, falling back to the client.
+func (r *WeaveReconciler) reader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
+}
+
+// update writes a Weave's metadata and spec back in its own group's type, and
+// takes up whatever the API server returned.
+func (r *WeaveReconciler) update(ctx context.Context, weave *weftv1.Weave) error {
+	obj := r.Served.FromV1(weave)
+	if err := r.Client.Update(ctx, obj); err != nil {
+		return err
+	}
+	weave.ObjectMeta = r.Served.ToV1(obj).ObjectMeta
+	return nil
+}
+
+// watchRef identifies this group's Weave to the watch registry.
+func (r *WeaveReconciler) watchRef(namespace, name string) watches.Weave {
+	return watches.Weave{Group: r.Served.API.Group, Namespace: namespace, Name: name}
 }
 
 // writeStatus persists status, skipping the write when nothing changed so a
 // steady state does not generate update traffic.
-func (r *WeaveReconciler) writeStatus(ctx context.Context, before, weave *v1alpha1.Weave) error {
+func (r *WeaveReconciler) writeStatus(ctx context.Context, before, weave *weftv1.Weave) error {
 	weave.Status.ObservedGeneration = weave.Generation
 	if equality.Semantic.DeepEqual(before.Status, weave.Status) {
 		return nil
 	}
-	err := r.Client.Status().Patch(ctx, weave, client.MergeFrom(before))
+	err := r.Client.Status().Patch(ctx, r.Served.FromV1(weave), client.MergeFrom(r.Served.FromV1(before)))
 	if apierrors.IsNotFound(err) || apierrors.IsConflict(err) {
 		// The object moved on. The next reconcile recomputes everything anyway.
 		return nil
@@ -548,11 +670,13 @@ func (r *WeaveReconciler) writeStatus(ctx context.Context, before, weave *v1alph
 	return err
 }
 
-func (r *WeaveReconciler) eventf(weave *v1alpha1.Weave, eventType, reason, format string, args ...any) {
+func (r *WeaveReconciler) eventf(weave *weftv1.Weave, eventType, reason, format string, args ...any) {
 	if r.Recorder == nil {
 		return
 	}
-	r.Recorder.Eventf(weave, eventType, reason, format, args...)
+	// Recorded against the object in its own group, which is the one kubectl
+	// describe will be looking at.
+	r.Recorder.Eventf(r.Served.FromV1(weave), eventType, reason, format, args...)
 }
 
 // programMessage renders a program failure with its backtrace, which is the
@@ -607,7 +731,7 @@ func joinWithAnd(items []string) string {
 // requeueFor returns how long until the soonest retained entry becomes
 // prunable. Nothing else generates an event when a delay expires, so the Weave
 // has to schedule its own wake-up.
-func requeueFor(retained []v1alpha1.InventoryEntry, delay time.Duration) time.Duration {
+func requeueFor(retained []weftv1.InventoryEntry, delay time.Duration) time.Duration {
 	soonest := time.Duration(0)
 	for _, e := range retained {
 		if e.MissingSince == nil {
@@ -627,8 +751,8 @@ func requeueFor(retained []v1alpha1.InventoryEntry, delay time.Duration) time.Du
 	return soonest
 }
 
-func concat(a, b []v1alpha1.InventoryEntry) []v1alpha1.InventoryEntry {
-	out := make([]v1alpha1.InventoryEntry, 0, len(a)+len(b))
+func concat(a, b []weftv1.InventoryEntry) []weftv1.InventoryEntry {
+	out := make([]weftv1.InventoryEntry, 0, len(a)+len(b))
 	out = append(out, a...)
 	return append(out, b...)
 }

@@ -19,7 +19,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/naming"
@@ -39,9 +39,10 @@ type Item struct {
 	// deleted in descending wave.
 	Wave int32
 
-	// Owned is false when the resource carries weft.run/owned=false. An unowned
-	// resource is applied and kept current, but no owner reference is placed on
-	// it and it is never deleted by this Weave.
+	// Owned is false when the resource carries its Weave's group's owned
+	// annotation set to "false". An unowned resource is applied and kept
+	// current, but no owner reference is placed on it and it is never deleted
+	// by this Weave.
 	Owned bool
 }
 
@@ -72,7 +73,7 @@ func Build(resources []eval.Resource, namespace string, owner kube.Owner) ([]Ite
 	needs := make(map[eval.Ref][]eval.Ref, len(resources))
 
 	for i, r := range resources {
-		owned, err := ownedFrom(r.Object, r.Ref)
+		owned, err := ownedFrom(r.Object, r.Ref, owner.API)
 		if err != nil {
 			return nil, err
 		}
@@ -190,10 +191,24 @@ func describeCycle(path []eval.Ref) string {
 // A typo is rejected rather than ignored. "owned: no" quietly meaning "owned"
 // is precisely the failure this annotation exists to prevent, and it would only
 // be discovered by the object being deleted.
-func ownedFrom(obj map[string]any, ref eval.Ref) (bool, error) {
+//
+// So is another group's annotation. A program moved from a weft.run Weave to a
+// v1 one, still saying weft.run/owned: "false", would otherwise have every
+// resource it meant to keep owned by the new Weave - and deleted with it.
+func ownedFrom(obj map[string]any, ref eval.Ref, api naming.API) (bool, error) {
 	md, _ := obj["metadata"].(map[string]any)
 	annotations, _ := md["annotations"].(map[string]any)
-	raw, ok := annotations[naming.OwnedAnnotation]
+	for _, other := range naming.APIs {
+		if other.Group == api.Group {
+			continue
+		}
+		if raw, ok := annotations[other.OwnedAnnotation]; ok {
+			return false, fmt.Errorf("%s has %s=%v, which is the annotation for %s Weaves; this Weave is %s "+
+				"and reads %s instead", ref, other.OwnedAnnotation, raw, other.GroupVersion, api.GroupVersion,
+				api.OwnedAnnotation)
+		}
+	}
+	raw, ok := annotations[api.OwnedAnnotation]
 	if !ok {
 		return true, nil
 	}
@@ -204,7 +219,7 @@ func ownedFrom(obj map[string]any, ref eval.Ref) (bool, error) {
 		return false, nil
 	default:
 		return false, fmt.Errorf("%s has %s=%v, which must be \"true\" or \"false\"",
-			ref, naming.OwnedAnnotation, raw)
+			ref, api.OwnedAnnotation, raw)
 	}
 }
 
@@ -215,10 +230,10 @@ type Diff struct {
 
 	// Retained is inventory that was not returned this time but has not been
 	// absent long enough to act on. Its MissingCount has been incremented.
-	Retained []v1alpha1.InventoryEntry
+	Retained []weftv1.InventoryEntry
 
 	// Prune is inventory absent for long enough to delete, in descending wave.
-	Prune []v1alpha1.InventoryEntry
+	Prune []weftv1.InventoryEntry
 
 	// Released is inventory that is no longer described and was applied
 	// unowned, so the record is dropped and the object left standing.
@@ -226,11 +241,11 @@ type Diff struct {
 	// No hysteresis applies. Waiting exists to avoid destroying something over
 	// a transient absence, and nothing here is destroyed - a release that turns
 	// out to be premature is undone by the next pass recording it again.
-	Released []v1alpha1.InventoryEntry
+	Released []weftv1.InventoryEntry
 }
 
 // refOfEntry is what an inventory entry addresses.
-func refOfEntry(e v1alpha1.InventoryEntry) eval.Ref {
+func refOfEntry(e weftv1.InventoryEntry) eval.Ref {
 	return eval.Ref{APIVersion: e.APIVersion, Kind: e.Kind, Name: e.Name}
 }
 
@@ -250,7 +265,7 @@ func refOfEntry(e v1alpha1.InventoryEntry) eval.Ref {
 // Callers must only apply this to a successful evaluation. One that waited or
 // failed says nothing about what should exist, and counting it would make a
 // provider outage look like a deletion.
-func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32, delay time.Duration, now time.Time) Diff {
+func Compute(current []weftv1.InventoryEntry, desired []Item, threshold int32, delay time.Duration, now time.Time) Diff {
 	if threshold < 1 {
 		threshold = 1
 	}
@@ -295,14 +310,14 @@ func Compute(current []v1alpha1.InventoryEntry, desired []Item, threshold int32,
 	return d
 }
 
-func sortDescending(entries []v1alpha1.InventoryEntry) {
+func sortDescending(entries []weftv1.InventoryEntry) {
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].Wave > entries[j].Wave })
 }
 
 // Entry records an applied item in the inventory.
-func Entry(item Item, applied *unstructured.Unstructured) v1alpha1.InventoryEntry {
+func Entry(item Item, applied *unstructured.Unstructured) weftv1.InventoryEntry {
 	gvk := item.GroupVersionKind()
-	e := v1alpha1.InventoryEntry{
+	e := weftv1.InventoryEntry{
 		APIVersion: gvk.GroupVersion().String(),
 		Kind:       gvk.Kind,
 		Name:       item.Object.GetName(),
@@ -321,8 +336,8 @@ func Entry(item Item, applied *unstructured.Unstructured) v1alpha1.InventoryEntr
 
 // Merge produces the inventory to record: the entries just applied, plus the
 // ones being retained through a transient absence, in a stable order.
-func Merge(applied []v1alpha1.InventoryEntry, retained []v1alpha1.InventoryEntry) []v1alpha1.InventoryEntry {
-	out := make([]v1alpha1.InventoryEntry, 0, len(applied)+len(retained))
+func Merge(applied []weftv1.InventoryEntry, retained []weftv1.InventoryEntry) []weftv1.InventoryEntry {
+	out := make([]weftv1.InventoryEntry, 0, len(applied)+len(retained))
 	out = append(out, applied...)
 	out = append(out, retained...)
 	sort.SliceStable(out, func(i, j int) bool {
@@ -341,11 +356,11 @@ func Merge(applied []v1alpha1.InventoryEntry, retained []v1alpha1.InventoryEntry
 // recorded. Entries within a wave have no dependency on each other and are
 // deleted together, which is what keeps a fan-out of seven role assignments
 // from becoming seven sequential round trips against a cloud API.
-func Waves(entries []v1alpha1.InventoryEntry) [][]v1alpha1.InventoryEntry {
+func Waves(entries []weftv1.InventoryEntry) [][]weftv1.InventoryEntry {
 	if len(entries) == 0 {
 		return nil
 	}
-	byWave := map[int32][]v1alpha1.InventoryEntry{}
+	byWave := map[int32][]weftv1.InventoryEntry{}
 	for _, e := range entries {
 		byWave[e.Wave] = append(byWave[e.Wave], e)
 	}
@@ -355,7 +370,7 @@ func Waves(entries []v1alpha1.InventoryEntry) [][]v1alpha1.InventoryEntry {
 	}
 	sort.Slice(waves, func(i, j int) bool { return waves[i] > waves[j] })
 
-	out := make([][]v1alpha1.InventoryEntry, 0, len(waves))
+	out := make([][]weftv1.InventoryEntry, 0, len(waves))
 	for _, w := range waves {
 		group := byWave[w]
 		sort.SliceStable(group, func(i, j int) bool {
@@ -393,7 +408,7 @@ func ApplyWaves(items []Item) [][]Item {
 }
 
 // GroupVersionKind parses an inventory entry's type.
-func GroupVersionKind(e v1alpha1.InventoryEntry) (schema.GroupVersionKind, error) {
+func GroupVersionKind(e weftv1.InventoryEntry) (schema.GroupVersionKind, error) {
 	gv, err := schema.ParseGroupVersion(e.APIVersion)
 	if err != nil {
 		return schema.GroupVersionKind{}, fmt.Errorf(

@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	yaml "sigs.k8s.io/yaml"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/jsonutil"
 	"github.com/alethic/weft/internal/variables"
 )
@@ -28,7 +28,7 @@ var (
 //
 // Every read is impersonated, like every other read: a Weave can take
 // configuration only from objects its ServiceAccount could read directly.
-func (r *WeaveReconciler) resolveVariables(ctx context.Context, rd *weaveReader, weave *v1alpha1.Weave) (map[string]any, error) {
+func (r *WeaveReconciler) resolveVariables(ctx context.Context, rd *weaveReader, weave *weftv1.Weave) (map[string]any, error) {
 	out := map[string]any{}
 
 	for i, entry := range weave.Spec.Variables {
@@ -41,7 +41,7 @@ func (r *WeaveReconciler) resolveVariables(ctx context.Context, rd *weaveReader,
 	return out, nil
 }
 
-func (r *WeaveReconciler) resolveVariable(ctx context.Context, rd *weaveReader, entry v1alpha1.Variable, index int) (map[string]any, error) {
+func (r *WeaveReconciler) resolveVariable(ctx context.Context, rd *weaveReader, entry weftv1.Variable, index int) (map[string]any, error) {
 	switch {
 	case entry.Values != nil:
 		return jsonutil.DecodeObject(entry.Values), nil
@@ -64,7 +64,7 @@ func (r *WeaveReconciler) readVariableObject(
 	ctx context.Context,
 	rd *weaveReader,
 	gvk schema.GroupVersionKind,
-	ref v1alpha1.VariableRef,
+	ref weftv1.VariableRef,
 	index int,
 	encoded bool,
 ) (map[string]any, error) {

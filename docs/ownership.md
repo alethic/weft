@@ -26,7 +26,7 @@ made.
 
 To hand it over deliberately, annotate the object itself. Consent belongs to
 whoever holds the resource, not to whoever wrote the program:
-  kubectl -n weft-demo annotate ConfigMap legacy weft.run/adopt=onboard
+  kubectl -n weft-demo annotate ConfigMap legacy weft.alethic.solutions/adopt=onboard
 
 From then on this Weave manages it, and deleting the Weave deletes it.
 Otherwise change the name the program produces, or remove what is there:
@@ -40,7 +40,7 @@ Nothing is written, and nothing is recorded in the inventory.
 Annotate the object with the name of the `Weave` allowed to take it:
 
 ```bash
-kubectl -n weft-demo annotate ConfigMap legacy weft.run/adopt=onboard
+kubectl -n weft-demo annotate ConfigMap legacy weft.alethic.solutions/adopt=onboard
 ```
 
 The annotation goes **on the object, not in the Weave**. That is the point: if a
@@ -55,10 +55,10 @@ naming the same `Weave` on every object:
 
 ```bash
 # Any Weave in this namespace.
-kubectl -n weft-demo annotate ConfigMap legacy weft.run/adopt='*'
+kubectl -n weft-demo annotate ConfigMap legacy weft.alethic.solutions/adopt='*'
 
 # Any whose name starts with app-.
-kubectl -n weft-demo annotate ConfigMap legacy weft.run/adopt='app-*'
+kubectl -n weft-demo annotate ConfigMap legacy weft.alethic.solutions/adopt='app-*'
 ```
 
 A pattern is still consent and still namespaced. A `Weave` only ever acts in its
@@ -77,7 +77,7 @@ a change worth being able to find later:
 
 ```
 Normal  Adopted  took ownership of ConfigMap "legacy", which was annotated
-                 weft.run/adopt=onboard. Deleting this Weave now deletes it.
+                 weft.alethic.solutions/adopt=onboard. Deleting this Weave now deletes it.
 ```
 
 That last sentence is the part to understand before annotating. Adoption is
@@ -102,7 +102,7 @@ instead.
 
 ## Opting a resource out of ownership
 
-A resource annotated `weft.run/owned: "false"` is applied without an owner
+A resource annotated `weft.alethic.solutions/owned: "false"` is applied without an owner
 reference. Weft keeps it current for as long as the program declares it, and
 never deletes it: not when it stops being declared, not when the `Weave` is
 deleted.
@@ -110,7 +110,7 @@ deleted.
 ```python
 "metadata": {
     "name": "app-db",
-    "annotations": {"weft.run/owned": "false"},
+    "annotations": {"weft.alethic.solutions/owned": "false"},
 }
 ```
 
@@ -121,7 +121,7 @@ the object outlives the thing describing it.
 Ceasing to declare it drops the inventory entry immediately, with no
 hysteresis: hysteresis exists to avoid destroying something over a transient
 absence, and nothing here is destroyed. An event records it, and the object
-keeps its `weft.run/weave` label.
+keeps its `weft.alethic.solutions/weave` label.
 
 ## Deleting a Weave takes its resources
 
@@ -165,14 +165,14 @@ real consequence for something that existed first. If you want it handed back
 rather than destroyed, release it with `--cascade=orphan` — and if you want it
 back under management later, annotate it again.
 
-Orphaned resources keep their `weft.run/weave` label and `weft.run/weave-uid`
+Orphaned resources keep their `weft.alethic.solutions/weave` label and `weft.alethic.solutions/weave-uid`
 annotation. A new `Weave` that tries to produce them will be refused as
 belonging to nobody, and can be given them again with the adopt annotation.
 
 ## Reclaiming what a Weave already made
 
-Everything Weft applies carries `weft.run/weave`, `weft.run/weave-uid` and
-`weft.run/weave-uid`. The `Weave`'s status records the same thing, but a status can be
+Everything Weft applies carries `weft.alethic.solutions/weave`, `weft.alethic.solutions/weave-uid` and
+`weft.alethic.solutions/weave-uid`. The `Weave`'s status records the same thing, but a status can be
 lost, and an unowned resource has no owner reference to fall back on — so
 without something written on the object, a lost inventory would leave a `Weave`
 permanently refusing to touch resources it made itself.
@@ -232,5 +232,5 @@ declarations cannot mean two of them
 | a declared object changes name or kind | the new one is created, the old one pruned after the delay |
 | an object stops being declared | pruned, after the delay |
 | the `Weave` is deleted | its resources are deleted, in reverse wave order |
-| a resource is annotated `weft.run/owned: "false"` | never deleted; released when it leaves the set |
+| a resource is annotated `weft.alethic.solutions/owned: "false"` | never deleted; released when it leaves the set |
 | the `Weave` is deleted with `--cascade=orphan` | resources kept, owner references stripped |

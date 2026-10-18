@@ -20,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/kube"
@@ -39,12 +40,15 @@ var (
 	testK8s client.Client
 )
 
-// harness is one reconciler wired to a fresh namespace.
+// harness is the reconcilers for both served groups, wired to a fresh
+// namespace. reconciler is v1's; legacy is weft.run's, sharing everything else
+// the way the two do in the binary.
 type harness struct {
 	t          *testing.T
 	ctx        context.Context
 	namespace  string
 	reconciler *WeaveReconciler
+	legacy     *WeaveReconciler
 	registry   *watches.Registry
 	events     *record.FakeRecorder
 	cancel     context.CancelFunc
@@ -107,10 +111,21 @@ func newHarness(t *testing.T, tune func(*Options)) *harness {
 	// reconciler that has already stopped.
 	t.Cleanup(func() {
 		cleanup := context.Background()
-		var weaves v1alpha1.WeaveList
+		var weaves weftv1.WeaveList
 		if err := testK8s.List(cleanup, &weaves, client.InNamespace(ns)); err == nil {
 			for i := range weaves.Items {
 				w := &weaves.Items[i]
+				if len(w.Finalizers) == 0 {
+					continue
+				}
+				w.Finalizers = nil
+				_ = testK8s.Update(cleanup, w)
+			}
+		}
+		var legacy v1alpha1.WeaveList
+		if err := testK8s.List(cleanup, &legacy, client.InNamespace(ns)); err == nil {
+			for i := range legacy.Items {
+				w := &legacy.Items[i]
 				if len(w.Finalizers) == 0 {
 					continue
 				}
@@ -151,7 +166,9 @@ func newHarness(t *testing.T, tune func(*Options)) *harness {
 	events := record.NewFakeRecorder(256)
 
 	r := &WeaveReconciler{
+		Served:    ServedV1,
 		Client:    testK8s,
+		APIReader: testK8s,
 		Scheme:    testK8s.Scheme(),
 		Factory:   factory,
 		Evaluator: eval.NewStarlark(eval.Options{}),
@@ -161,9 +178,12 @@ func newHarness(t *testing.T, tune func(*Options)) *harness {
 	}
 	r.Opts.applyDefaults()
 
+	legacy := *r
+	legacy.Served = ServedLegacy
+
 	return &harness{
 		t: t, ctx: ctx, namespace: ns,
-		reconciler: r, registry: registry, events: events, cancel: cancel,
+		reconciler: r, legacy: &legacy, registry: registry, events: events, cancel: cancel,
 	}
 }
 
@@ -205,26 +225,26 @@ func (h *harness) settle(name string, passes int) {
 	}
 }
 
-func (h *harness) weave(name string) *v1alpha1.Weave {
+func (h *harness) weave(name string) *weftv1.Weave {
 	h.t.Helper()
-	var w v1alpha1.Weave
+	var w weftv1.Weave
 	if err := testK8s.Get(h.ctx, types.NamespacedName{Namespace: h.namespace, Name: name}, &w); err != nil {
 		h.t.Fatalf("getting weave: %v", err)
 	}
 	return &w
 }
 
-func (h *harness) create(name, program, values string) *v1alpha1.Weave {
+func (h *harness) create(name, program, values string) *weftv1.Weave {
 	h.t.Helper()
-	w := &v1alpha1.Weave{
+	w := &weftv1.Weave{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.namespace},
-		Spec: v1alpha1.WeaveSpec{
+		Spec: weftv1.WeaveSpec{
 			ServiceAccountName: "composer",
 			Program:            program,
 		},
 	}
 	if values != "" {
-		w.Spec.Variables = []v1alpha1.Variable{
+		w.Spec.Variables = []weftv1.Variable{
 			{Values: &apiextensionsv1.JSON{Raw: []byte(values)}},
 		}
 	}
@@ -262,7 +282,7 @@ func (h *harness) exists(name string) bool {
 	return err == nil
 }
 
-func condition(w *v1alpha1.Weave, condType string) *metav1.Condition {
+func condition(w *weftv1.Weave, condType string) *metav1.Condition {
 	for i := range w.Status.Conditions {
 		if w.Status.Conditions[i].Type == condType {
 			return &w.Status.Conditions[i]
@@ -271,7 +291,7 @@ func condition(w *v1alpha1.Weave, condType string) *metav1.Condition {
 	return nil
 }
 
-func requireCondition(t *testing.T, w *v1alpha1.Weave, condType string, status metav1.ConditionStatus) *metav1.Condition {
+func requireCondition(t *testing.T, w *weftv1.Weave, condType string, status metav1.ConditionStatus) *metav1.Condition {
 	t.Helper()
 	c := condition(w, condType)
 	if c == nil {
@@ -316,7 +336,7 @@ def compose(variable):
 	if len(refs) != 1 || refs[0].Kind != naming.Kind || refs[0].UID != w.UID {
 		t.Errorf("output is not owned by the Weave: %+v", refs)
 	}
-	if cm.Labels[naming.WeaveLabel] != "app" {
+	if cm.Labels[naming.V1.WeaveLabel] != "app" {
 		t.Errorf("labels = %v", cm.Labels)
 	}
 	if len(w.Status.Inventory) != 1 || w.Status.Inventory[0].Name != "settings" {
@@ -648,7 +668,7 @@ def compose(variable):
 	if h.exists("base") || h.exists("middle") {
 		t.Error("everything should be gone once the hold is released")
 	}
-	var gone v1alpha1.Weave
+	var gone weftv1.Weave
 	err = testK8s.Get(h.ctx, types.NamespacedName{Namespace: h.namespace, Name: "stack"}, &gone)
 	if !apierrors.IsNotFound(err) {
 		t.Errorf("the Weave should have been released, got %v", err)
@@ -824,12 +844,12 @@ def compose(variable):
 
 	found := false
 	for _, f := range w.Finalizers {
-		if f == naming.WeaveFinalizer {
+		if f == naming.V1.WeaveFinalizer {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("finalizers = %v, want %q", w.Finalizers, naming.WeaveFinalizer)
+		t.Errorf("finalizers = %v, want %q", w.Finalizers, naming.V1.WeaveFinalizer)
 	}
 }
 

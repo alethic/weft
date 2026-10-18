@@ -1,0 +1,405 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.23.0
+  name: weaves.weft.run
+spec:
+  group: weft.run
+  names:
+    kind: Weave
+    listKind: WeaveList
+    plural: weaves
+    shortNames:
+    - wv
+    singular: weave
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.conditions[?(@.type=='Ready')].status
+      name: Ready
+      type: string
+    - jsonPath: .status.conditions[?(@.type=='Waiting')].reason
+      name: Waiting
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Weave reads existing resources in its namespace and generates others from
+          them, reactively, as the ServiceAccount it names.
+
+          This is the weft.run/v1alpha1 form. New Weaves should use
+          weft.alethic.solutions/v1, which has the same spec.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: WeaveSpec defines a composition.
+            properties:
+              program:
+                description: |-
+                  Program is a Starlark program defining compose(variable), which declares
+                  the resources that should exist by calling resource() on each of them.
+
+                  A resource is identified by the apiVersion, kind and name in its own body,
+                  which is the only identity anything outside the program can see. Renaming
+                  one is not a rename: it stops declaring one object and starts declaring
+                  another, so the first is pruned and the second created.
+
+                  What a declared object looks like in the cluster now is reached through the
+                  value resource() returned, not through a second parameter, because it is a
+                  fact about that resource rather than a mapping to look it up in.
+                minLength: 1
+                type: string
+              serviceAccountName:
+                description: |-
+                  ServiceAccountName names a ServiceAccount in this namespace. Every read
+                  and every write Weft performs for this Weave is impersonated as that
+                  ServiceAccount.
+
+                  The controller holds impersonation rights, not write access, so a Weave
+                  can never cause the creation of anything its ServiceAccount could not
+                  have created directly.
+                maxLength: 253
+                minLength: 1
+                type: string
+              variables:
+                description: |-
+                  Variables is static configuration, assembled from these entries and
+                  reaching the program as one mapping bound to variable.
+
+                  Entries are merged in order and later ones win, so a base can come from a
+                  ConfigMap somebody else maintains and be overridden inline here. Mappings
+                  merge key by key; anything else is replaced outright, which is the same
+                  rule Helm values follow and the one people already expect.
+
+                  A program cannot tell where a value came from, which is the point: moving
+                  a setting from inline to a ConfigMap is not a change to the composition.
+
+                  Variables are keys; sources are resources. Nothing here is watched for
+                  the sake of an ordering edge - a ConfigMap named here is read for the
+                  values in it, and a change to it re-runs the program.
+                items:
+                  description: Variable is one entry in spec.variables. Exactly one
+                    field is set.
+                  properties:
+                    configMap:
+                      description: ConfigMap takes configuration from a ConfigMap
+                        in this namespace.
+                      properties:
+                        key:
+                          description: |-
+                            Key selects a single entry, whose content is parsed as YAML and merged as
+                            a mapping. Without it every entry becomes one variable, with its value as a
+                            string.
+
+                            This is the difference between a ConfigMap of flat settings and one
+                            holding a values.yaml document, and both are common enough to deserve
+                            support.
+                          type: string
+                        name:
+                          description: Name of the object, in the Weave's own namespace.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                        optional:
+                          description: |-
+                            Optional skips this entry when the object does not exist. Without it a
+                            missing object leaves the Weave waiting, because a composition built on
+                            configuration that has not arrived is not ready.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    secret:
+                      description: |-
+                        Secret takes configuration from a Secret in this namespace.
+
+                        Read through the same impersonated client as everything else, so a Weave
+                        can only read a Secret its ServiceAccount could read directly. Be aware
+                        that a value reaching a program can be written into any resource that
+                        ServiceAccount may create.
+                      properties:
+                        key:
+                          description: |-
+                            Key selects a single entry, whose content is parsed as YAML and merged as
+                            a mapping. Without it every entry becomes one variable, with its value as a
+                            string.
+
+                            This is the difference between a ConfigMap of flat settings and one
+                            holding a values.yaml document, and both are common enough to deserve
+                            support.
+                          type: string
+                        name:
+                          description: Name of the object, in the Weave's own namespace.
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                        optional:
+                          description: |-
+                            Optional skips this entry when the object does not exist. Without it a
+                            missing object leaves the Weave waiting, because a composition built on
+                            configuration that has not arrived is not ready.
+                          type: boolean
+                      required:
+                      - name
+                      type: object
+                    values:
+                      description: |-
+                        Values is configuration written here. Plain YAML, never templated or
+                        evaluated.
+
+                        The explicit type is what lets the validation rule above see this field
+                        at all: a property with preserved unknown fields and no type is invisible
+                        to CEL, and the rule fails to compile rather than failing to apply.
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+                  type: object
+                  x-kubernetes-validations:
+                  - message: set exactly one of values, configMap or secret
+                    rule: '(has(self.values) ? 1 : 0) + (has(self.configMap) ? 1 :
+                      0) + (has(self.secret) ? 1 : 0) == 1'
+                type: array
+                x-kubernetes-list-type: atomic
+            required:
+            - program
+            - serviceAccountName
+            type: object
+          status:
+            description: WeaveStatus is the observed state of a Weave.
+            properties:
+              conditions:
+                description: |-
+                  Conditions follow the standard Ready / Waiting / Degraded split.
+
+                  Waiting deserves emphasis: resolution has three outcomes, not two, and
+                  "not yet" is the normal one. A resource that is not there, an unpopulated status
+                  field and an explicit wait() all land here, each naming the specific
+                  thing that has not resolved.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              held:
+                description: Held records the resources this Weave has placed a finalizer
+                  on.
+                items:
+                  description: |-
+                    HeldResource is a resource this Weave has placed a finalizer on, because a
+                    program read it with hold=True.
+
+                    It is recorded rather than derived because the request lives in the program,
+                    and a program that stops asking - or stops running at all - must still leave
+                    something behind that says what to release.
+                  properties:
+                    apiVersion:
+                      description: APIVersion of the held resource.
+                      type: string
+                    kind:
+                      description: Kind of the held resource.
+                      type: string
+                    name:
+                      description: Name of the held resource, in the Weave's own namespace.
+                      type: string
+                    teardownStartedAt:
+                      description: |-
+                        TeardownStartedAt is set when a held resource began deleting. It starts
+                        the clock on the hard timeout after which the finalizer is released
+                        regardless of teardown progress.
+                      format: date-time
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  - name
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              inventory:
+                description: |-
+                  Inventory is every resource this Weave currently owns, with its apply
+                  order.
+                items:
+                  description: InventoryEntry records one resource this Weave created.
+                  properties:
+                    apiVersion:
+                      description: |-
+                        APIVersion, Kind and Name identify the live object, and are its whole
+                        identity. A composition describes objects, so there is nothing else for
+                        an entry to be about. Its namespace is
+                        always the Weave's own.
+                      type: string
+                    kind:
+                      type: string
+                    missingCount:
+                      description: |-
+                        MissingCount is the number of consecutive successful evaluations in
+                        which this resource was not returned.
+
+                        It stops climbing once it reaches the threshold. That is not cosmetic:
+                        a status write wakes the Weave through its own watch, so a field that
+                        changes on every pass is a self-sustaining reconcile loop.
+                      format: int32
+                      type: integer
+                    missingSince:
+                      description: |-
+                        MissingSince is when this resource first stopped being returned by a
+                        successful evaluation, and is cleared the moment it comes back.
+
+                        Pruning waits on elapsed time, not only on a count. Reconciles are
+                        event-driven and the applies in a single pass generate watch events of
+                        their own, so several "consecutive evaluations" can complete inside a
+                        second - which is no protection at all against the thing hysteresis
+                        exists for. A managed resource drops its status for as long as its
+                        provider takes to restart, and a program waiting on that status
+                        legitimately stops returning whatever depends on it for that whole
+                        period. Only a clock measures that.
+                      format: date-time
+                      type: string
+                    name:
+                      type: string
+                    owned:
+                      description: |-
+                        Owned records whether this Weave holds an owner reference on the
+                        resource. False means it was applied with the owned annotation set to
+                        "false" and will never be deleted by this Weave.
+
+                        It is remembered here rather than read from the object, because the
+                        moment it matters is the moment the program stopped returning it - there
+                        is no returned object left to read it from.
+
+                        Written on every entry rather than omitted when false, so that reading
+                        the inventory shows which resources this Weave will take with it and
+                        which it will leave standing.
+                      type: boolean
+                    uid:
+                      description: |-
+                        UID of the applied object, recorded so teardown can tell a resource we
+                        created from a later resource that happens to share its name.
+                      type: string
+                    wave:
+                      description: |-
+                        Wave is the apply order. Resources are applied in ascending wave and
+                        deleted in descending wave, because cascading garbage collection is
+                        unordered and self-reference creates a real internal DAG.
+                      format: int32
+                      type: integer
+                  required:
+                  - apiVersion
+                  - kind
+                  - name
+                  - owned
+                  - wave
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+              observedGeneration:
+                description: ObservedGeneration is the spec generation most recently
+                  evaluated.
+                format: int64
+                type: integer
+              reads:
+                description: |-
+                  Reads records the kinds this composition read on its last successful
+                  pass. It is the watch set: a program that reads a ResourceGroup has to
+                  be woken when one changes, and the only record of that is what it
+                  actually asked for.
+
+                  Kept across restarts so a Weave that is waiting still has its watches
+                  re-established without having to evaluate first.
+                items:
+                  description: ReadRef identifies one resource a program read, or
+                    one selection it made.
+                  properties:
+                    apiVersion:
+                      description: APIVersion of what was read.
+                      type: string
+                    kind:
+                      description: Kind of what was read.
+                      type: string
+                  required:
+                  - apiVersion
+                  - kind
+                  type: object
+                type: array
+                x-kubernetes-list-type: atomic
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

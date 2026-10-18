@@ -9,7 +9,7 @@
 #
 #   kubectl -n weft-demo create configmap tenant --from-literal=tenantId=acme-42
 #
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1
 kind: Weave
 metadata:
   name: waiting

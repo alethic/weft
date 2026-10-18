@@ -7,11 +7,14 @@ import (
 	"os"
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/api/v1alpha1"
+	"github.com/alethic/weft/internal/controller"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/naming"
 )
@@ -22,7 +25,7 @@ import (
 // own is how a namespace ends up undeletable, so reaping is part of the
 // product rather than a runbook step. The set of objects to visit is exactly
 // known: Weft only ever finalizes a source a Weave declared, so walking the
-// Weaves finds all of them.
+// Weaves - in every served group - finds all of them.
 func runReap(args []string) error {
 	fs := flag.NewFlagSet("weft reap", flag.ExitOnError)
 	namespace := fs.String("namespace", "", "Restrict to a single namespace. Empty covers all of them.")
@@ -50,46 +53,78 @@ func runReap(args []string) error {
 		return err
 	}
 	factory, err := kube.NewFactory(restCfg, mapper, kube.FactoryOptions{
-		UserAgent: naming.Group + "/reap",
+		UserAgent: "weft/reap",
 	})
 	if err != nil {
 		return err
 	}
 
-	var list v1alpha1.WeaveList
 	var opts []client.ListOption
 	if *namespace != "" {
 		opts = append(opts, client.InNamespace(*namespace))
 	}
-	if err := c.List(ctx, &list, opts...); err != nil {
-		return fmt.Errorf("listing Weaves: %w", err)
-	}
 
-	released := 0
-	for i := range list.Items {
-		w := &list.Items[i]
-		n, err := reapWeave(ctx, c, factory, w, *dryRun, *weaveFinalizers)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  %s/%s: %v\n", w.Namespace, w.Name, err)
+	released, weaves := 0, 0
+	for _, served := range controller.AllServed {
+		list, err := listWeaves(ctx, c, served, opts)
+		if meta.IsNoMatchError(err) {
+			// That group's CRD is not installed, so it has no Weaves.
 			continue
 		}
-		released += n
+		if err != nil {
+			return fmt.Errorf("listing %s Weaves: %w", served.API.GroupVersion, err)
+		}
+		for _, w := range list {
+			n, err := reapWeave(ctx, c, factory, served, w, *dryRun, *weaveFinalizers)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  %s %s/%s: %v\n", served.API.Group, w.Namespace, w.Name, err)
+				continue
+			}
+			released += n
+		}
+		weaves += len(list)
 	}
 
 	verb := "released"
 	if *dryRun {
 		verb = "would release"
 	}
-	fmt.Printf("%s %d finalizers across %d Weaves\n", verb, released, len(list.Items))
-	fmt.Printf("\nAnything Weft missed carries a finalizer starting %q and can be found with:\n"+
-		"  kubectl get <kind> -A -o json | jq -r '.items[] | select(.metadata.finalizers[]? | startswith(\"%s\")) | \"\\(.metadata.namespace)/\\(.metadata.name)\"'\n",
-		naming.HeldFinalizerPrefix, naming.HeldFinalizerPrefix)
+	fmt.Printf("%s %d finalizers across %d Weaves\n", verb, released, weaves)
+	fmt.Printf("\nAnything Weft missed carries a finalizer starting %q or %q and can be found with:\n"+
+		"  kubectl get <kind> -A -o json | jq -r '.items[] | select(.metadata.finalizers[]? | test(\"^(%s|%s)\")) | \"\\(.metadata.namespace)/\\(.metadata.name)\"'\n",
+		naming.V1.HeldFinalizerPrefix, naming.Legacy.HeldFinalizerPrefix,
+		naming.V1.HeldFinalizerPrefix, naming.Legacy.HeldFinalizerPrefix)
 	return nil
 }
 
-func reapWeave(ctx context.Context, c client.Client, factory *kube.Factory, w *v1alpha1.Weave, dryRun, includeWeave bool) (int, error) {
+// listWeaves lists one group's Weaves, as v1.
+func listWeaves(ctx context.Context, c client.Client, served controller.Served, opts []client.ListOption) ([]*weftv1.Weave, error) {
+	var out []*weftv1.Weave
+	switch served.API.Group {
+	case naming.Legacy.Group:
+		var list v1alpha1.WeaveList
+		if err := c.List(ctx, &list, opts...); err != nil {
+			return nil, err
+		}
+		for i := range list.Items {
+			out = append(out, served.ToV1(&list.Items[i]))
+		}
+	default:
+		var list weftv1.WeaveList
+		if err := c.List(ctx, &list, opts...); err != nil {
+			return nil, err
+		}
+		for i := range list.Items {
+			out = append(out, served.ToV1(&list.Items[i]))
+		}
+	}
+	return out, nil
+}
+
+func reapWeave(ctx context.Context, c client.Client, factory *kube.Factory, served controller.Served, w *weftv1.Weave, dryRun, includeWeave bool) (int, error) {
 	released := 0
-	want := naming.HeldFinalizer(w.Namespace, w.Name)
+	api := served.API
+	want := api.HeldFinalizer(w.Namespace, w.Name)
 
 	var impersonated *kube.Client
 	// status.held is the record of what this Weave actually placed. There is no
@@ -109,7 +144,7 @@ func reapWeave(ctx context.Context, c client.Client, factory *kube.Factory, w *v
 		}
 
 		if impersonated == nil {
-			impersonated, err = factory.For(w.Namespace, w.Spec.ServiceAccountName)
+			impersonated, err = factory.For(api, w.Namespace, w.Spec.ServiceAccountName)
 			if err != nil {
 				return released, err
 			}
@@ -137,16 +172,16 @@ func reapWeave(ctx context.Context, c client.Client, factory *kube.Factory, w *v
 		}
 	}
 
-	if includeWeave && hasFinalizer(w.Finalizers, naming.WeaveFinalizer) {
+	if includeWeave && hasFinalizer(w.Finalizers, api.WeaveFinalizer) {
 		if dryRun {
-			fmt.Printf("  %s/%s: would release %s from the Weave itself\n", w.Namespace, w.Name, naming.WeaveFinalizer)
+			fmt.Printf("  %s/%s: would release %s from the Weave itself\n", w.Namespace, w.Name, api.WeaveFinalizer)
 			return released + 1, nil
 		}
-		w.Finalizers = withoutFinalizer(w.Finalizers, naming.WeaveFinalizer)
-		if err := c.Update(ctx, w); err != nil && !apierrors.IsNotFound(err) {
+		w.Finalizers = withoutFinalizer(w.Finalizers, api.WeaveFinalizer)
+		if err := c.Update(ctx, served.FromV1(w)); err != nil && !apierrors.IsNotFound(err) {
 			return released, fmt.Errorf("releasing the Weave finalizer: %w", err)
 		}
-		fmt.Printf("  %s/%s: released %s from the Weave itself\n", w.Namespace, w.Name, naming.WeaveFinalizer)
+		fmt.Printf("  %s/%s: released %s from the Weave itself\n", w.Namespace, w.Name, api.WeaveFinalizer)
 		released++
 	}
 

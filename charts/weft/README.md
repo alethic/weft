@@ -10,22 +10,24 @@ See the [project README](../../README.md) for what a `Weave` is and
 ## Install
 
 ```bash
-helm install weft oci://ghcr.io/alethic/charts/weft --devel \
+helm install weft oci://ghcr.io/alethic/charts/weft \
   --namespace weft-system --create-namespace
 ```
 
-The chart lives in GitHub Packages as an OCI artifact, published on every build
-of `main`. No stable release is cut yet, so `--devel` is needed to resolve a
-prerelease; without it Helm looks for a `1.0`-style version and finds nothing.
-Pin an exact `--version 0.1.0-pre.23` for anything you care about.
+The chart lives in GitHub Packages as an OCI artifact. Without `--version`,
+Helm resolves the newest release; pin an exact `--version` for anything you
+care about. Every build of `main` is also published as a prerelease
+(`0.1.1-pre.3` and so on), which Helm only considers with `--devel`.
 
 ```bash
-helm show chart oci://ghcr.io/alethic/charts/weft --devel
+helm show chart oci://ghcr.io/alethic/charts/weft
 ```
 
 The chart's `appVersion` selects the image tag, so a chart and the controller it
 installs always carry the same version. A released chart additionally pins
-`image.digest`, so it cannot drift under a moved tag.
+the image by digest, so it cannot drift under a moved tag. That digest ships in
+the chart itself rather than in its values, so `helm upgrade --reuse-values`
+still moves you to the new release's image.
 
 Or from a checkout:
 
@@ -52,12 +54,13 @@ To remove the controller but keep everything the Weaves produced, delete them
 with `kubectl delete weave --all --cascade=orphan` first. Weft honours orphan
 propagation: the resources stay and simply stop being managed.
 
-The CRD is left behind on purpose (`crds.keep`). Deleting it deletes every
-`Weave` in the cluster, and each `Weave` deleted that way takes the resources it
-owns with it — an uninstall should not be able to destroy infrastructure.
-Remove it deliberately when you mean to:
+The CRDs are left behind on purpose (`crds.keep`). Deleting one deletes every
+`Weave` of that group in the cluster, and each `Weave` deleted that way takes
+the resources it owns with it — an uninstall should not be able to destroy
+infrastructure. Remove them deliberately when you mean to:
 
 ```bash
+kubectl delete crd weaves.weft.alethic.solutions
 kubectl delete crd weaves.weft.run
 ```
 
@@ -70,7 +73,7 @@ kubectl delete crd weaves.weft.run
 | `replicaCount` | `1` | Leader election means only one replica reconciles; a second buys faster handover, not throughput. |
 | `image.repository` | `ghcr.io/alethic/weft` | |
 | `image.tag` | `""` | Falls back to the chart's `appVersion`, which is the version the chart itself carries, so the two never disagree. |
-| `image.digest` | `""` | Wins over `tag` when set. Pin this in production. |
+| `image.digest` | `""` | Wins over `tag` when set. Pin this in production. Left empty, a published chart runs the digest it was published with. |
 | `image.pullPolicy` | `IfNotPresent` | |
 | `imagePullSecrets` | `[]` | |
 | `resources.requests.cpu` | `50m` | |
@@ -86,7 +89,7 @@ kubectl delete crd weaves.weft.run
 | key | default | |
 |---|---|---|
 | `crds.install` | `true` | Turn off when CRDs are managed separately. |
-| `crds.keep` | `true` | Keep the CRD on uninstall. Read the warning above before changing this. |
+| `crds.keep` | `true` | Keep the CRDs on uninstall. Read the warning above before changing this. |
 
 ### RBAC
 
@@ -127,7 +130,7 @@ controller:
 |---|---|---|
 | `controller.watchNamespace` | `""` | Restrict to one namespace. Empty watches all. |
 | `controller.leaderElection.enabled` | `true` | |
-| `controller.leaderElection.id` | `weft.run` | Change only to run two independent installations. |
+| `controller.leaderElection.id` | `weft.alethic.solutions` | Change only to run two independent installations. |
 | `controller.impersonateGroups` | `[system:serviceaccounts, system:authenticated]` | Impersonating the username alone yields an identity weaker than the real ServiceAccount, so RBAC bound to `system:authenticated` would silently not apply. |
 | `controller.pruneDelay` | `2m` | How long a resource must be continuously absent before deletion. Raise it above your provider's restart time. |
 | `controller.pruneThreshold` | `3` | Successful evaluations it must also be absent from. |

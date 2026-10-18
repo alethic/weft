@@ -8,7 +8,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/naming"
 )
 
@@ -27,11 +27,11 @@ def compose(variable):
         })
 `
 
-func (h *harness) createWithVariables(name string, entries []v1alpha1.Variable) *v1alpha1.Weave {
+func (h *harness) createWithVariables(name string, entries []weftv1.Variable) *weftv1.Weave {
 	h.t.Helper()
-	w := &v1alpha1.Weave{
+	w := &weftv1.Weave{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: h.namespace},
-		Spec: v1alpha1.WeaveSpec{
+		Spec: weftv1.WeaveSpec{
 			ServiceAccountName: "composer",
 			Variables:          entries,
 			Program:            echoVariables,
@@ -44,8 +44,8 @@ func (h *harness) createWithVariables(name string, entries []v1alpha1.Variable) 
 	return w
 }
 
-func inlineValues(raw string) v1alpha1.Variable {
-	return v1alpha1.Variable{Values: &apiextensionsv1.JSON{Raw: []byte(raw)}}
+func inlineValues(raw string) weftv1.Variable {
+	return weftv1.Variable{Values: &apiextensionsv1.JSON{Raw: []byte(raw)}}
 }
 
 // A ConfigMap under a Weave's control, and one written inline over it. A
@@ -58,8 +58,8 @@ func TestVariablesOverlayConfigMapWithInlineValues(t *testing.T) {
 		"tier":   "standard",
 	})
 
-	h.createWithVariables("layered", []v1alpha1.Variable{
-		{ConfigMap: &v1alpha1.VariableRef{Name: "platform"}},
+	h.createWithVariables("layered", []weftv1.Variable{
+		{ConfigMap: &weftv1.VariableRef{Name: "platform"}},
 		inlineValues(`{"tier": "premium", "extra": "inline"}`),
 	})
 	h.settle("layered", 2)
@@ -91,8 +91,8 @@ func TestVariablesFromSecretAreDecoded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	h.createWithVariables("fromsecret", []v1alpha1.Variable{
-		{Secret: &v1alpha1.VariableRef{Name: "creds"}},
+	h.createWithVariables("fromsecret", []weftv1.Variable{
+		{Secret: &weftv1.VariableRef{Name: "creds"}},
 	})
 	h.settle("fromsecret", 2)
 
@@ -113,8 +113,8 @@ func TestVariablesFromAKeyParsedAsYAML(t *testing.T) {
 		"values.yaml": "image:\n  repository: base\n  tag: v1\nreplicas: 2\n",
 	})
 
-	h.createWithVariables("document", []v1alpha1.Variable{
-		{ConfigMap: &v1alpha1.VariableRef{Name: "values", Key: "values.yaml"}},
+	h.createWithVariables("document", []weftv1.Variable{
+		{ConfigMap: &weftv1.VariableRef{Name: "values", Key: "values.yaml"}},
 		inlineValues(`{"image": {"tag": "v2"}}`),
 	})
 	h.settle("document", 2)
@@ -139,8 +139,8 @@ func TestVariablesFromAKeyParsedAsYAML(t *testing.T) {
 func TestVariablesWaitForAMissingObject(t *testing.T) {
 	h := newHarness(t, nil)
 
-	h.createWithVariables("waiting", []v1alpha1.Variable{
-		{ConfigMap: &v1alpha1.VariableRef{Name: "not-there"}},
+	h.createWithVariables("waiting", []weftv1.Variable{
+		{ConfigMap: &weftv1.VariableRef{Name: "not-there"}},
 	})
 	h.settle("waiting", 2)
 
@@ -170,9 +170,9 @@ func TestVariablesWaitForAMissingObject(t *testing.T) {
 func TestVariablesSkipAnOptionalMissingObject(t *testing.T) {
 	h := newHarness(t, nil)
 
-	h.createWithVariables("optional", []v1alpha1.Variable{
+	h.createWithVariables("optional", []weftv1.Variable{
 		inlineValues(`{"base": "yes"}`),
-		{ConfigMap: &v1alpha1.VariableRef{Name: "absent", Optional: true}},
+		{ConfigMap: &weftv1.VariableRef{Name: "absent", Optional: true}},
 	})
 	h.settle("optional", 2)
 
@@ -192,8 +192,8 @@ func TestVariablesReactToAConfigMapChange(t *testing.T) {
 	h := newHarness(t, nil)
 	h.configMap("settings", map[string]string{"mode": "before"})
 
-	h.createWithVariables("reactive", []v1alpha1.Variable{
-		{ConfigMap: &v1alpha1.VariableRef{Name: "settings"}},
+	h.createWithVariables("reactive", []weftv1.Variable{
+		{ConfigMap: &weftv1.VariableRef{Name: "settings"}},
 	})
 	h.settle("reactive", 2)
 
@@ -224,13 +224,13 @@ func TestVariablesAreReadUnderImpersonation(t *testing.T) {
 	h := newHarness(t, nil)
 	h.configMap("secrets-of-state", map[string]string{"classified": "yes"})
 
-	w := &v1alpha1.Weave{
+	w := &weftv1.Weave{
 		ObjectMeta: metav1.ObjectMeta{Name: "nosy", Namespace: h.namespace},
-		Spec: v1alpha1.WeaveSpec{
+		Spec: weftv1.WeaveSpec{
 			// Granted nothing at all.
 			ServiceAccountName: "powerless",
-			Variables: []v1alpha1.Variable{
-				{ConfigMap: &v1alpha1.VariableRef{Name: "secrets-of-state"}},
+			Variables: []weftv1.Variable{
+				{ConfigMap: &weftv1.VariableRef{Name: "secrets-of-state"}},
 			},
 			Program: echoVariables,
 		},

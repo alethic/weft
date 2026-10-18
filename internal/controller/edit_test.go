@@ -10,7 +10,7 @@ import (
 	k8stypes "k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/naming"
 )
 
@@ -85,7 +85,7 @@ def compose(variable):
 	if c.Reason != ReasonNotOurs {
 		t.Errorf("reason = %q, want %q", c.Reason, ReasonNotOurs)
 	}
-	if !strings.Contains(c.Message, naming.AdoptAnnotation) {
+	if !strings.Contains(c.Message, naming.V1.AdoptAnnotation) {
 		t.Error("the refusal should say how to hand the object over deliberately")
 	}
 
@@ -109,7 +109,7 @@ def compose(variable):
 func TestAdoptsWhenTheObjectConsents(t *testing.T) {
 	h := newHarness(t, nil)
 	cm := h.configMap("onboarded", map[string]string{"owner": "somebody-else"})
-	cm.Annotations = map[string]string{naming.AdoptAnnotation: "adopter"}
+	cm.Annotations = map[string]string{naming.V1.AdoptAnnotation: "adopter"}
 	if err := testK8s.Update(h.ctx, cm); err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ def compose(variable):
 func TestAdoptionAnnotationIsSpecific(t *testing.T) {
 	h := newHarness(t, nil)
 	cm := h.configMap("spoken-for", nil)
-	cm.Annotations = map[string]string{naming.AdoptAnnotation: "some-other-weave"}
+	cm.Annotations = map[string]string{naming.V1.AdoptAnnotation: "some-other-weave"}
 	if err := testK8s.Update(h.ctx, cm); err != nil {
 		t.Fatal(err)
 	}
@@ -213,7 +213,7 @@ def compose(variable):
 	// collection once it has stripped the owner references, on a schedule of
 	// its own - asserting on that would be testing Kubernetes rather than this
 	// controller, and it is slow enough on a small cluster to be flaky.
-	var released v1alpha1.Weave
+	var released weftv1.Weave
 	err = testK8s.Get(h.ctx, k8stypes.NamespacedName{Namespace: h.namespace, Name: "orphaning"}, &released)
 	switch {
 	case apierrors.IsNotFound(err):
@@ -222,7 +222,7 @@ def compose(variable):
 		t.Fatal(err)
 	default:
 		for _, f := range released.Finalizers {
-			if f == naming.WeaveFinalizer {
+			if f == naming.V1.WeaveFinalizer {
 				t.Errorf("Weft is still holding the Weave: %v", released.Finalizers)
 			}
 		}

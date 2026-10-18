@@ -6,7 +6,7 @@ import (
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/naming"
 )
 
@@ -21,7 +21,7 @@ def compose(variable):
             "apiVersion": "v1", "kind": "ConfigMap",
             "metadata": {
                 "name": "keeper",
-                "annotations": {"weft.run/owned": "false"},
+                "annotations": {"weft.alethic.solutions/owned": "false"},
             },
             "data": {"kept": "yes"},
         })
@@ -50,7 +50,7 @@ func TestUnownedResourceGetsNoOwnerReference(t *testing.T) {
 	}
 
 	// Still findable as something this Weave made.
-	if keeper.Labels[naming.WeaveLabel] != "keeping" {
+	if keeper.Labels[naming.V1.WeaveLabel] != "keeping" {
 		t.Errorf("labels = %v, want the Weave label kept", keeper.Labels)
 	}
 
@@ -93,7 +93,7 @@ func TestUnownedResourceSurvivesLeavingTheWeave(t *testing.T) {
 	}
 
 	w := h.weave("dropping")
-	w.Spec.Variables = []v1alpha1.Variable{
+	w.Spec.Variables = []weftv1.Variable{
 		{Values: &apiextensionsv1.JSON{Raw: []byte(`{"dropped": true}`)}},
 	}
 	if err := testK8s.Update(h.ctx, w); err != nil {
@@ -151,13 +151,13 @@ func TestOwnedAnnotationRejectsAnythingElse(t *testing.T) {
 def compose(variable):
     resource({
         "apiVersion": "v1", "kind": "ConfigMap",
-        "metadata": {"name": "x", "annotations": {"weft.run/owned": "no"}},
+        "metadata": {"name": "x", "annotations": {"weft.alethic.solutions/owned": "no"}},
         })
 `, "")
 	h.settle("typo", 2)
 
 	c := requireCondition(t, h.weave("typo"), naming.ConditionDegraded, metav1.ConditionTrue)
-	if !containsAll(c.Message, "weft.run/owned", `"true"`, `"false"`) {
+	if !containsAll(c.Message, "weft.alethic.solutions/owned", `"true"`, `"false"`) {
 		t.Errorf("message should say what the accepted values are: %s", c.Message)
 	}
 	if h.exists("x") {

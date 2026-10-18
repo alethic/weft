@@ -12,6 +12,9 @@ image:
   # Defaults to the chart's appVersion when empty.
   tag: ""
   # A digest, when set, wins over tag. Pin this in production: a tag can move.
+  #
+  # Left empty, a published chart runs the image digest it was published with,
+  # and a chart from a checkout runs its appVersion tag.
   digest: ""
   pullPolicy: IfNotPresent
 
@@ -75,6 +78,8 @@ controller:
   leaderElection:
     enabled: true
     # Lease name. Change it only to run two independent Weft installations.
+    # It predates v1 and keeps its name so that a rolling upgrade's old and new
+    # replicas contend for the same lease rather than both leading.
     id: weft.run
 
   # Groups impersonated alongside the ServiceAccount username.
