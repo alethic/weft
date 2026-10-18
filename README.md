@@ -207,9 +207,8 @@ top shows the current one.
 The API is `weft.alethic.solutions/v1`. A change that would break a `v1`
 Weave would come as a new API version, not as a change to this one.
 
-Weft itself is pre-1.0. The controller, the chart and their defaults may still
-change from one release to the next, and every such change is called out in
-that release's notes.
+Any change to the controller, the chart or their defaults is called out in the
+notes of the release that makes it.
 
 Builds of `main` between releases are published too, as prereleases such as
 `0.1.1-pre.3`. Helm only installs those with `--devel`; they are for trying a
