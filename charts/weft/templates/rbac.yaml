@@ -27,6 +27,18 @@ rules:
   - apiGroups: ["weft.alethic.solutions"]
     resources: ["weaves/finalizers"]
     verbs: ["update"]
+  {{- if .Values.legacyAPI.enabled }}
+  # The same for weft.run, the group Weft was first deployed under.
+  - apiGroups: ["weft.run"]
+    resources: ["weaves"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["weft.run"]
+    resources: ["weaves/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["weft.run"]
+    resources: ["weaves/finalizers"]
+    verbs: ["update"]
+  {{- end }}
 
   - apiGroups: [""]
     resources: ["events"]

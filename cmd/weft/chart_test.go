@@ -12,6 +12,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/yaml"
+
+	"github.com/alethic/weft/internal/naming"
 )
 
 // The chart's rendered arguments are parsed here with the very flag set the
@@ -353,15 +355,20 @@ func TestChartRefusesMultipleReplicasWithoutLeaderElection(t *testing.T) {
 // Uninstalling a controller must not be able to destroy infrastructure.
 func TestChartKeepsTheCRDByDefault(t *testing.T) {
 	out := renderChart(t)
-	crd := documentContaining(t, out, "kind: CustomResourceDefinition")
-	if !strings.Contains(crd, "helm.sh/resource-policy: keep") {
-		t.Error("the CRD should be kept on uninstall by default: deleting it deletes every Weave, and each takes the resources it owns with it")
+	for _, api := range naming.APIs {
+		crd := documentContaining(t, out, "name: "+api.CRDName)
+		if !strings.Contains(crd, "helm.sh/resource-policy: keep") {
+			t.Errorf("the %s CRD should be kept on uninstall by default: deleting it deletes every Weave, "+
+				"and each takes the resources it owns with it", api.Group)
+		}
 	}
 
 	out = renderChart(t, "--set", "crds.keep=false")
-	crd = documentContaining(t, out, "kind: CustomResourceDefinition")
-	if strings.Contains(crd, "helm.sh/resource-policy: keep") {
-		t.Error("crds.keep=false should drop the annotation")
+	for _, api := range naming.APIs {
+		crd := documentContaining(t, out, "name: "+api.CRDName)
+		if strings.Contains(crd, "helm.sh/resource-policy: keep") {
+			t.Errorf("crds.keep=false should drop the annotation from the %s CRD", api.Group)
+		}
 	}
 
 	out = renderChart(t, "--set", "crds.install=false")
@@ -370,12 +377,57 @@ func TestChartKeepsTheCRDByDefault(t *testing.T) {
 	}
 }
 
-// The chart's CRD is the generated one, so the two cannot drift.
+// crdFiles names the generated CRD for every served group.
+func crdFiles() []string {
+	out := make([]string, 0, len(naming.APIs))
+	for _, api := range naming.APIs {
+		out = append(out, api.Group+"_"+naming.Plural+".yaml")
+	}
+	return out
+}
+
+// The chart's CRDs are the generated ones, so the two cannot drift.
 func TestChartCRDMatchesGenerated(t *testing.T) {
-	generated := readFile(t, "../../config/crd/weft.alethic.solutions_weaves.yaml")
-	shipped := readFile(t, "../../charts/weft/files/weaves-crd.yaml")
-	if generated != shipped {
-		t.Error("charts/weft/files/weaves-crd.yaml differs from the generated CRD; run make generate")
+	for _, f := range crdFiles() {
+		generated := readFile(t, "../../config/crd/"+f)
+		shipped := readFile(t, "../../charts/weft/files/crds/"+f)
+		if generated != shipped {
+			t.Errorf("charts/weft/files/crds/%s differs from the generated CRD; run make generate", f)
+		}
+	}
+}
+
+// Both groups are served by default, so an upgrade from a release that only
+// knew weft.run keeps every existing Weave reconciled. Turning the legacy group
+// off removes all of it - CRD, grant and controller - together, since any one
+// without the others is a controller that cannot start or a CRD nothing serves.
+func TestChartServesLegacyAPIUnlessDisabled(t *testing.T) {
+	out := renderChart(t)
+	for _, want := range []string{
+		"name: " + naming.V1.CRDName,
+		"name: " + naming.Legacy.CRDName,
+		`apiGroups: ["` + naming.Legacy.Group + `"]`,
+		"--serve-legacy-api=true",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("default render is missing %q", want)
+		}
+	}
+
+	out = renderChart(t, "--set", "legacyAPI.enabled=false")
+	if !strings.Contains(out, "name: "+naming.V1.CRDName) {
+		t.Error("disabling the legacy API removed the v1 CRD")
+	}
+	for _, unwanted := range []string{
+		"name: " + naming.Legacy.CRDName,
+		`apiGroups: ["` + naming.Legacy.Group + `"]`,
+	} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("legacyAPI.enabled=false still renders %q", unwanted)
+		}
+	}
+	if !strings.Contains(out, "--serve-legacy-api=false") {
+		t.Error("legacyAPI.enabled=false must tell the controller not to serve it")
 	}
 }
 
@@ -405,25 +457,29 @@ func readFile(t *testing.T, path string) string {
 // silently dropped validation rule would let the API server accept a Weave the
 // controller cannot honour.
 func TestChartCRDRoundTripIsLossless(t *testing.T) {
-	rendered := documentContaining(t, renderChart(t), "kind: CustomResourceDefinition")
+	out := renderChart(t)
+	for _, api := range naming.APIs {
+		rendered := documentContaining(t, out, "name: "+api.CRDName)
 
-	var fromChart, fromGenerator map[string]any
-	if err := yaml.Unmarshal([]byte(rendered), &fromChart); err != nil {
-		t.Fatalf("parsing the chart's CRD: %v", err)
-	}
-	if err := yaml.Unmarshal([]byte(readFile(t, "../../config/crd/weft.alethic.solutions_weaves.yaml")), &fromGenerator); err != nil {
-		t.Fatalf("parsing the generated CRD: %v", err)
-	}
+		var fromChart, fromGenerator map[string]any
+		if err := yaml.Unmarshal([]byte(rendered), &fromChart); err != nil {
+			t.Fatalf("parsing the chart's %s CRD: %v", api.Group, err)
+		}
+		generated := readFile(t, "../../config/crd/"+api.Group+"_"+naming.Plural+".yaml")
+		if err := yaml.Unmarshal([]byte(generated), &fromGenerator); err != nil {
+			t.Fatalf("parsing the generated %s CRD: %v", api.Group, err)
+		}
 
-	if !reflect.DeepEqual(fromChart["spec"], fromGenerator["spec"]) {
-		t.Error("the chart's rendered CRD spec differs from the generated one; the templating is lossy")
-	}
+		if !reflect.DeepEqual(fromChart["spec"], fromGenerator["spec"]) {
+			t.Errorf("the chart's rendered %s CRD spec differs from the generated one; the templating is lossy", api.Group)
+		}
 
-	// Only metadata should differ, and only by additions.
-	chartMeta := fromChart["metadata"].(map[string]any)
-	genMeta := fromGenerator["metadata"].(map[string]any)
-	if chartMeta["name"] != genMeta["name"] {
-		t.Errorf("name = %v, want %v", chartMeta["name"], genMeta["name"])
+		// Only metadata should differ, and only by additions.
+		chartMeta := fromChart["metadata"].(map[string]any)
+		genMeta := fromGenerator["metadata"].(map[string]any)
+		if chartMeta["name"] != genMeta["name"] {
+			t.Errorf("name = %v, want %v", chartMeta["name"], genMeta["name"])
+		}
 	}
 }
 

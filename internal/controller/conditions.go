@@ -4,7 +4,7 @@ import (
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/naming"
 )
 
@@ -24,6 +24,7 @@ const (
 	ReasonWatchDegraded    = "WatchDegraded"
 	ReasonNotOurs          = "ResourceNotOurs"
 	ReasonVariableMissing  = "VariableMissing"
+	ReasonHandover         = "HandoverPending"
 )
 
 // maxMessage keeps a condition inside the API server's limit with room to
@@ -40,7 +41,7 @@ func truncate(s string) string {
 
 // setCondition writes one condition, leaving LastTransitionTime alone when
 // nothing changed so that a steady state does not churn the object.
-func setCondition(w *v1alpha1.Weave, condType string, status metav1.ConditionStatus, reason, message string) {
+func setCondition(w *weftv1.Weave, condType string, status metav1.ConditionStatus, reason, message string) {
 	apimeta.SetStatusCondition(&w.Status.Conditions, metav1.Condition{
 		Type:               condType,
 		Status:             status,
@@ -51,7 +52,7 @@ func setCondition(w *v1alpha1.Weave, condType string, status metav1.ConditionSta
 }
 
 // markReady records that the returned set is fully applied.
-func markReady(w *v1alpha1.Weave, message string) {
+func markReady(w *weftv1.Weave, message string) {
 	setCondition(w, naming.ConditionReady, metav1.ConditionTrue, ReasonApplied, message)
 	setCondition(w, naming.ConditionWaiting, metav1.ConditionFalse, ReasonApplied, "nothing outstanding")
 	setCondition(w, naming.ConditionDegraded, metav1.ConditionFalse, ReasonApplied, "no errors")
@@ -62,14 +63,14 @@ func markReady(w *v1alpha1.Weave, message string) {
 // This is the normal steady state for a composition that spans several
 // provisioning steps, not an error, and the message names the specific thing
 // that has not resolved.
-func markWaiting(w *v1alpha1.Weave, reason, message string) {
+func markWaiting(w *weftv1.Weave, reason, message string) {
 	setCondition(w, naming.ConditionReady, metav1.ConditionFalse, reason, message)
 	setCondition(w, naming.ConditionWaiting, metav1.ConditionTrue, reason, message)
 	setCondition(w, naming.ConditionDegraded, metav1.ConditionFalse, ReasonApplied, "no errors")
 }
 
 // markDegraded records something that will not resolve without a change.
-func markDegraded(w *v1alpha1.Weave, reason, message string) {
+func markDegraded(w *weftv1.Weave, reason, message string) {
 	setCondition(w, naming.ConditionReady, metav1.ConditionFalse, reason, message)
 	setCondition(w, naming.ConditionWaiting, metav1.ConditionFalse, reason, "blocked by an error")
 	setCondition(w, naming.ConditionDegraded, metav1.ConditionTrue, reason, message)

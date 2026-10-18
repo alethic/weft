@@ -52,13 +52,14 @@ To remove the controller but keep everything the Weaves produced, delete them
 with `kubectl delete weave --all --cascade=orphan` first. Weft honours orphan
 propagation: the resources stay and simply stop being managed.
 
-The CRD is left behind on purpose (`crds.keep`). Deleting it deletes every
-`Weave` in the cluster, and each `Weave` deleted that way takes the resources it
-owns with it — an uninstall should not be able to destroy infrastructure.
-Remove it deliberately when you mean to:
+The CRDs are left behind on purpose (`crds.keep`). Deleting one deletes every
+`Weave` of that group in the cluster, and each `Weave` deleted that way takes
+the resources it owns with it — an uninstall should not be able to destroy
+infrastructure. Remove them deliberately when you mean to:
 
 ```bash
 kubectl delete crd weaves.weft.alethic.solutions
+kubectl delete crd weaves.weft.run    # if legacyAPI was enabled
 ```
 
 ## Values
@@ -86,7 +87,13 @@ kubectl delete crd weaves.weft.alethic.solutions
 | key | default | |
 |---|---|---|
 | `crds.install` | `true` | Turn off when CRDs are managed separately. |
-| `crds.keep` | `true` | Keep the CRD on uninstall. Read the warning above before changing this. |
+| `crds.keep` | `true` | Keep the CRDs on uninstall. Read the warning above before changing this. |
+
+### Legacy API
+
+| key | default | |
+|---|---|---|
+| `legacyAPI.enabled` | `true` | Also serve `weft.run/v1alpha1`, the group Weft was first deployed under: install its CRD, grant the controller access to it, and reconcile its Weaves. A cluster that has never had one can turn this off. Turning it off while `weft.run` Weaves remain leaves them unreconciled and holding finalizers. See [docs/migrating.md](../../docs/migrating.md). |
 
 ### RBAC
 

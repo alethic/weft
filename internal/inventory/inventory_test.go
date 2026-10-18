@@ -8,7 +8,7 @@ import (
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/naming"
@@ -16,10 +16,9 @@ import (
 
 func owner() kube.Owner {
 	return kube.Owner{
-		APIVersion: naming.GroupVersion,
-		Kind:       naming.Kind,
-		Name:       "app",
-		UID:        "weave-uid",
+		API:  naming.V1,
+		Name: "app",
+		UID:  "weave-uid",
 	}
 }
 
@@ -178,8 +177,8 @@ func dependent(name string, deps ...string) eval.Resource {
 	return eval.Resource{Ref: ref(name), Object: res(name), Needs: refs, NeedsDeclared: true}
 }
 
-func entriesOf(items []Item) []v1alpha1.InventoryEntry {
-	out := make([]v1alpha1.InventoryEntry, 0, len(items))
+func entriesOf(items []Item) []weftv1.InventoryEntry {
+	out := make([]weftv1.InventoryEntry, 0, len(items))
 	for _, it := range items {
 		out = append(out, Entry(it, nil))
 	}
@@ -209,10 +208,10 @@ func TestBuildOwnsAndLabels(t *testing.T) {
 	if refs[0].BlockOwnerDeletion == nil || !*refs[0].BlockOwnerDeletion {
 		t.Error("owner reference should block owner deletion")
 	}
-	if obj.GetLabels()[naming.WeaveLabel] != "app" {
+	if obj.GetLabels()[naming.V1.WeaveLabel] != "app" {
 		t.Errorf("labels = %v", obj.GetLabels())
 	}
-	if obj.GetAnnotations()[naming.WeaveUIDAnnotation] != "weave-uid" {
+	if obj.GetAnnotations()[naming.V1.WeaveUIDAnnotation] != "weave-uid" {
 		t.Errorf("annotations = %v", obj.GetAnnotations())
 	}
 }
@@ -275,8 +274,8 @@ func TestBuildStripsDerivedMetadata(t *testing.T) {
 	}
 }
 
-func inventoryEntry(name string, wave int32, missing int32) v1alpha1.InventoryEntry {
-	return v1alpha1.InventoryEntry{
+func inventoryEntry(name string, wave int32, missing int32) weftv1.InventoryEntry {
+	return weftv1.InventoryEntry{
 		APIVersion: "v1", Kind: "ConfigMap", Name: name,
 		Wave: wave, MissingCount: missing, Owned: true,
 	}
@@ -289,7 +288,7 @@ const testDelay = 2 * time.Minute
 // legitimately stops returning what depends on it.
 func TestComputeHysteresis(t *testing.T) {
 	t0 := time.Now()
-	current := []v1alpha1.InventoryEntry{inventoryEntry("gone", 1, 0), inventoryEntry("kept", 0, 0)}
+	current := []weftv1.InventoryEntry{inventoryEntry("gone", 1, 0), inventoryEntry("kept", 0, 0)}
 	desired, err := Build(evaluated("kept"), "ns", owner())
 	if err != nil {
 		t.Fatal(err)
@@ -311,7 +310,7 @@ func TestComputeHysteresis(t *testing.T) {
 	// own. The delay is what actually holds the resource.
 	next := d.Retained[0]
 	for i := 2; i <= 6; i++ {
-		d = Compute([]v1alpha1.InventoryEntry{next, inventoryEntry("kept", 0, 0)}, desired, 3, testDelay,
+		d = Compute([]weftv1.InventoryEntry{next, inventoryEntry("kept", 0, 0)}, desired, 3, testDelay,
 			t0.Add(time.Duration(i)*time.Second))
 		if len(d.Prune) != 0 {
 			t.Fatalf("pass %d pruned after %d seconds; the delay is %s", i, i, testDelay)
@@ -323,7 +322,7 @@ func TestComputeHysteresis(t *testing.T) {
 	}
 
 	// Once the delay has elapsed, it goes.
-	d = Compute([]v1alpha1.InventoryEntry{next, inventoryEntry("kept", 0, 0)}, desired, 3, testDelay,
+	d = Compute([]weftv1.InventoryEntry{next, inventoryEntry("kept", 0, 0)}, desired, 3, testDelay,
 		t0.Add(testDelay+time.Second))
 	if len(d.Prune) != 1 || d.Prune[0].Name != "gone" {
 		t.Fatalf("should prune once the delay has elapsed, got %v", d.Prune)
@@ -346,7 +345,7 @@ func TestComputeCountAloneDoesNotPrune(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := Compute([]v1alpha1.InventoryEntry{entry}, desired, 3, testDelay, t0.Add(time.Second))
+	d := Compute([]weftv1.InventoryEntry{entry}, desired, 3, testDelay, t0.Add(time.Second))
 	if len(d.Prune) != 0 {
 		t.Errorf("a high count with no elapsed time pruned anyway: %v", d.Prune)
 	}
@@ -363,7 +362,7 @@ func TestComputeDelayAloneDoesNotPrune(t *testing.T) {
 
 	// First absence, observed long after the entry was created. The clock
 	// starts now, not retroactively.
-	d := Compute([]v1alpha1.InventoryEntry{inventoryEntry("gone", 0, 0)}, desired, 3, testDelay, t0)
+	d := Compute([]weftv1.InventoryEntry{inventoryEntry("gone", 0, 0)}, desired, 3, testDelay, t0)
 	if len(d.Prune) != 0 {
 		t.Errorf("first absence pruned immediately: %v", d.Prune)
 	}
@@ -379,7 +378,7 @@ func TestComputeReappearanceResetsTheHysteresis(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	d := Compute([]v1alpha1.InventoryEntry{entry}, desired, 3, testDelay, time.Now())
+	d := Compute([]weftv1.InventoryEntry{entry}, desired, 3, testDelay, time.Now())
 	if len(d.Prune) != 0 || len(d.Retained) != 0 {
 		t.Fatalf("a returned resource is neither pruned nor retained: %+v", d)
 	}
@@ -393,7 +392,7 @@ func TestComputeReappearanceResetsTheHysteresis(t *testing.T) {
 }
 
 func TestWavesAreDescendingForTeardown(t *testing.T) {
-	groups := Waves([]v1alpha1.InventoryEntry{
+	groups := Waves([]weftv1.InventoryEntry{
 		inventoryEntry("identity", 0, 0),
 		inventoryEntry("ra-b", 2, 0),
 		inventoryEntry("ra-a", 2, 0),
@@ -431,8 +430,8 @@ func TestApplyWavesAreAscending(t *testing.T) {
 
 func TestMergeIsStable(t *testing.T) {
 	out := Merge(
-		[]v1alpha1.InventoryEntry{inventoryEntry("b", 1, 0), inventoryEntry("a", 0, 0)},
-		[]v1alpha1.InventoryEntry{inventoryEntry("z", 0, 1)},
+		[]weftv1.InventoryEntry{inventoryEntry("b", 1, 0), inventoryEntry("a", 0, 0)},
+		[]weftv1.InventoryEntry{inventoryEntry("z", 0, 1)},
 	)
 	want := []string{"a", "z", "b"}
 	for i, w := range want {
@@ -443,7 +442,7 @@ func TestMergeIsStable(t *testing.T) {
 }
 
 func TestGroupVersionKind(t *testing.T) {
-	gvk, err := GroupVersionKind(v1alpha1.InventoryEntry{
+	gvk, err := GroupVersionKind(weftv1.InventoryEntry{
 		APIVersion: "azure.m.upbound.io/v1beta1", Kind: "ResourceGroup",
 	})
 	if err != nil {
@@ -453,7 +452,7 @@ func TestGroupVersionKind(t *testing.T) {
 		t.Errorf("gvk = %v", gvk)
 	}
 
-	if _, err := GroupVersionKind(v1alpha1.InventoryEntry{Name: "x", APIVersion: "a/b/c"}); err == nil {
+	if _, err := GroupVersionKind(weftv1.InventoryEntry{Name: "x", APIVersion: "a/b/c"}); err == nil {
 		t.Error("an unparseable apiVersion should be an error")
 	}
 }
@@ -468,8 +467,8 @@ func TestSteadyStateInventoryIsIdentical(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	pass := func() []v1alpha1.InventoryEntry {
-		applied := make([]v1alpha1.InventoryEntry, 0, len(desired))
+	pass := func() []weftv1.InventoryEntry {
+		applied := make([]weftv1.InventoryEntry, 0, len(desired))
 		for _, item := range desired {
 			applied = append(applied, Entry(item, nil))
 		}
@@ -495,9 +494,9 @@ func TestMissingCountStopsAtTheThreshold(t *testing.T) {
 	}
 
 	entry := inventoryEntry("gone", 0, 0)
-	var last v1alpha1.InventoryEntry
+	var last weftv1.InventoryEntry
 	for i := 0; i < 20; i++ {
-		d := Compute([]v1alpha1.InventoryEntry{entry}, desired, 3, time.Hour, t0.Add(time.Duration(i)*time.Second))
+		d := Compute([]weftv1.InventoryEntry{entry}, desired, 3, time.Hour, t0.Add(time.Duration(i)*time.Second))
 		if len(d.Retained) != 1 {
 			t.Fatalf("pass %d: retained %d entries", i, len(d.Retained))
 		}
@@ -515,7 +514,7 @@ func TestMissingCountStopsAtTheThreshold(t *testing.T) {
 // that stopped being described, and the new one is created.
 func TestRenamingIsAPruneAndACreate(t *testing.T) {
 	t0 := time.Now()
-	current := []v1alpha1.InventoryEntry{{
+	current := []weftv1.InventoryEntry{{
 		APIVersion: "v1", Kind: "ConfigMap", Name: "thing-one", Wave: 0, Owned: true,
 		MissingCount: 3, MissingSince: timePtr(t0.Add(-time.Hour)),
 	}}
@@ -537,7 +536,7 @@ func TestRenamingIsAPruneAndACreate(t *testing.T) {
 // Unchanged entries are left exactly alone, which is what keeps a settled Weave
 // from writing its own status on every pass.
 func TestComputeIgnoresUnchangedEntries(t *testing.T) {
-	current := []v1alpha1.InventoryEntry{{
+	current := []weftv1.InventoryEntry{{
 		APIVersion: "v1", Kind: "ConfigMap", Name: "thing", Wave: 0, Owned: true,
 	}}
 	desired, err := Build([]eval.Resource{declared("thing")}, "ns", owner())

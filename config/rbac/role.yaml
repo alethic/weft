@@ -28,6 +28,7 @@ rules:
   - impersonate
 - apiGroups:
   - weft.alethic.solutions
+  - weft.run
   resources:
   - weaves
   verbs:
@@ -38,12 +39,14 @@ rules:
   - watch
 - apiGroups:
   - weft.alethic.solutions
+  - weft.run
   resources:
   - weaves/finalizers
   verbs:
   - update
 - apiGroups:
   - weft.alethic.solutions
+  - weft.run
   resources:
   - weaves/status
   verbs:

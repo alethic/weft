@@ -9,7 +9,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/eval"
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/kube"
@@ -21,7 +21,7 @@ import (
 // Self-reference through these values is how a composition advances in stages,
 // so they are read live rather than remembered: a resource we applied minutes
 // ago is interesting precisely because its status has changed since.
-func (r *WeaveReconciler) readObserved(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave) (map[eval.Ref]map[string]any, error) {
+func (r *WeaveReconciler) readObserved(ctx context.Context, c *kube.Client, weave *weftv1.Weave) (map[eval.Ref]map[string]any, error) {
 	observed := make(map[eval.Ref]map[string]any, len(weave.Status.Inventory))
 
 	for _, e := range weave.Status.Inventory {
@@ -69,7 +69,7 @@ func (r *WeaveReconciler) readObserved(ctx context.Context, c *kube.Client, weav
 // runs. Persisting it is what lets a controller restart re-establish the
 // watches for a Weave that is waiting and will not evaluate again until
 // something it cannot currently see changes.
-func watchKeys(weave *v1alpha1.Weave) []watches.Key {
+func watchKeys(weave *weftv1.Weave) []watches.Key {
 	seen := make(map[watches.Key]bool)
 	var keys []watches.Key
 

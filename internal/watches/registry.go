@@ -20,13 +20,11 @@ import (
 	"github.com/go-logr/logr"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/metadata/metadatainformer"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
-	"github.com/alethic/weft/api/v1alpha1"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/metrics"
 )
@@ -50,6 +48,18 @@ type Key struct {
 func (k Key) String() string {
 	return fmt.Sprintf("%s %s/%s as %s", k.GVK.Kind, k.GVK.GroupVersion(), k.Namespace, k.ServiceAccount)
 }
+
+// Weave identifies the Weave holding a watch.
+//
+// The group is part of it because a weft.run Weave and a v1 Weave can share a
+// namespace and a name, and each must be woken by its own controller.
+type Weave struct {
+	Group     string
+	Namespace string
+	Name      string
+}
+
+func (w Weave) String() string { return w.Group + " " + w.Namespace + "/" + w.Name }
 
 // Failure records a watch that could not be established.
 type Failure struct {
@@ -107,21 +117,21 @@ func (o *Options) applyDefaults() {
 
 // Registry owns every dynamic watch, reference-counted by Weave.
 type Registry struct {
-	opts   Options
-	events chan event.GenericEvent
+	opts Options
 
 	mu      sync.Mutex
 	started bool
 	ctx     context.Context
+	events  map[string]chan event.GenericEvent
 	entries map[Key]*entry
-	refs    map[types.NamespacedName]map[Key]bool
+	refs    map[Weave]map[Key]bool
 }
 
 // entry is one running informer and the Weaves that depend on it.
 type entry struct {
 	key    Key
 	client *kube.Client
-	refs   map[types.NamespacedName]bool
+	refs   map[Weave]bool
 	cancel context.CancelFunc
 
 	mu     sync.Mutex
@@ -133,14 +143,29 @@ func NewRegistry(opts Options) *Registry {
 	opts.applyDefaults()
 	return &Registry{
 		opts:    opts,
-		events:  make(chan event.GenericEvent, opts.Buffer),
+		events:  make(map[string]chan event.GenericEvent),
 		entries: make(map[Key]*entry),
-		refs:    make(map[types.NamespacedName]map[Key]bool),
+		refs:    make(map[Weave]map[Key]bool),
 	}
 }
 
-// Events is the channel to wire into the controller as a source.
-func (r *Registry) Events() <-chan event.GenericEvent { return r.events }
+// Events is the channel to wire into one group's controller as a source. Each
+// group's Weaves are enqueued on their own channel, so a change wakes the
+// Weave that read it and not a same-named one in the other group.
+func (r *Registry) Events(group string) <-chan event.GenericEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.channelLocked(group)
+}
+
+func (r *Registry) channelLocked(group string) chan event.GenericEvent {
+	ch, ok := r.events[group]
+	if !ok {
+		ch = make(chan event.GenericEvent, r.opts.Buffer)
+		r.events[group] = ch
+	}
+	return ch
+}
 
 // Start implements manager.Runnable. It holds the parent context for every
 // informer and tears them all down on shutdown.
@@ -158,7 +183,7 @@ func (r *Registry) Start(ctx context.Context) error {
 		e.cancel()
 		delete(r.entries, k)
 	}
-	r.refs = make(map[types.NamespacedName]map[Key]bool)
+	r.refs = make(map[Weave]map[Key]bool)
 	return nil
 }
 
@@ -168,7 +193,7 @@ func (r *Registry) NeedLeaderElection() bool { return true }
 
 // Ensure makes the registry's watch set for one Weave exactly the given keys,
 // starting what is missing and releasing what is no longer referenced.
-func (r *Registry) Ensure(weave types.NamespacedName, c *kube.Client, want []Key) (Report, error) {
+func (r *Registry) Ensure(weave Weave, c *kube.Client, want []Key) (Report, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -207,7 +232,7 @@ func (r *Registry) Ensure(weave types.NamespacedName, c *kube.Client, want []Key
 }
 
 // Release drops every watch held for a Weave.
-func (r *Registry) Release(weave types.NamespacedName) {
+func (r *Registry) Release(weave Weave) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for k := range r.refs[weave] {
@@ -240,18 +265,18 @@ func (r *Registry) publishLocked() {
 	metrics.WatchesActive.WithLabelValues("degraded").Set(float64(degraded))
 }
 
-func (r *Registry) acquireLocked(weave types.NamespacedName, k Key, c *kube.Client) *entry {
+func (r *Registry) acquireLocked(weave Weave, k Key, c *kube.Client) *entry {
 	if e, ok := r.entries[k]; ok {
 		e.refs[weave] = true
 		return e
 	}
-	e := &entry{key: k, client: c, refs: map[types.NamespacedName]bool{weave: true}}
+	e := &entry{key: k, client: c, refs: map[Weave]bool{weave: true}}
 	r.entries[k] = e
 	r.startLocked(e)
 	return e
 }
 
-func (r *Registry) releaseLocked(weave types.NamespacedName, k Key) {
+func (r *Registry) releaseLocked(weave Weave, k Key) {
 	e, ok := r.entries[k]
 	if !ok {
 		return
@@ -348,25 +373,30 @@ func (r *Registry) expire(ctx context.Context, k Key) {
 	r.startLocked(replacement)
 }
 
-// notify enqueues every Weave that depends on a key.
+// notify enqueues every Weave that depends on a key, each on its own group's
+// channel.
 func (r *Registry) notify(k Key) {
+	type target struct {
+		ch chan event.GenericEvent
+		w  Weave
+	}
 	r.mu.Lock()
 	e, ok := r.entries[k]
 	if !ok {
 		r.mu.Unlock()
 		return
 	}
-	weaves := make([]types.NamespacedName, 0, len(e.refs))
+	targets := make([]target, 0, len(e.refs))
 	for w := range e.refs {
-		weaves = append(weaves, w)
+		targets = append(targets, target{ch: r.channelLocked(w.Group), w: w})
 	}
 	ctx := r.ctx
 	r.mu.Unlock()
 
-	for _, w := range weaves {
-		ev := event.GenericEvent{Object: weaveRef(w)}
+	for _, t := range targets {
+		ev := event.GenericEvent{Object: weaveRef(t.w)}
 		select {
-		case r.events <- ev:
+		case t.ch <- ev:
 		case <-ctx.Done():
 			return
 		}
@@ -374,9 +404,9 @@ func (r *Registry) notify(k Key) {
 }
 
 // weaveRef is the minimum object the enqueue handler needs: a name and a
-// namespace.
-func weaveRef(w types.NamespacedName) client.Object {
-	return &v1alpha1.Weave{
+// namespace. Which group it belongs to is said by the channel it arrives on.
+func weaveRef(w Weave) client.Object {
+	return &metav1.PartialObjectMetadata{
 		ObjectMeta: metav1.ObjectMeta{Name: w.Name, Namespace: w.Namespace},
 	}
 }

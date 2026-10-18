@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/metrics"
@@ -22,8 +22,8 @@ import (
 // a partial apply is still recorded: an unrecorded resource is an orphan, and
 // orphans were the single worst property of the cron-and-template arrangement
 // this replaces.
-func (r *WeaveReconciler) applyAll(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, items []inventory.Item) ([]v1alpha1.InventoryEntry, error) {
-	applied := make([]v1alpha1.InventoryEntry, 0, len(items))
+func (r *WeaveReconciler) applyAll(ctx context.Context, c *kube.Client, weave *weftv1.Weave, items []inventory.Item) ([]weftv1.InventoryEntry, error) {
+	applied := make([]weftv1.InventoryEntry, 0, len(items))
 
 	for _, wave := range inventory.ApplyWaves(items) {
 		var waveErr error
@@ -98,7 +98,7 @@ func applyError(item inventory.Item, err error) error {
 // that names a principal has to go before the identity that owns the principal,
 // or the provider is left reconciling an assignment whose subject no longer
 // exists.
-func (r *WeaveReconciler) deleteWaves(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, entries []v1alpha1.InventoryEntry) ([]v1alpha1.InventoryEntry, error) {
+func (r *WeaveReconciler) deleteWaves(ctx context.Context, c *kube.Client, weave *weftv1.Weave, entries []weftv1.InventoryEntry) ([]weftv1.InventoryEntry, error) {
 	groups := inventory.Waves(entries)
 
 	for i, group := range groups {
@@ -110,7 +110,7 @@ func (r *WeaveReconciler) deleteWaves(ctx context.Context, c *kube.Client, weave
 			continue
 		}
 		// This wave is still going. Everything below it waits.
-		remaining := append([]v1alpha1.InventoryEntry(nil), standing...)
+		remaining := append([]weftv1.InventoryEntry(nil), standing...)
 		for _, lower := range groups[i+1:] {
 			remaining = append(remaining, lower...)
 		}
@@ -122,8 +122,8 @@ func (r *WeaveReconciler) deleteWaves(ctx context.Context, c *kube.Client, weave
 
 // deleteGroup issues deletes for one wave and reports which of them have not
 // gone away yet.
-func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, group []v1alpha1.InventoryEntry) ([]v1alpha1.InventoryEntry, error) {
-	var standing []v1alpha1.InventoryEntry
+func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, weave *weftv1.Weave, group []weftv1.InventoryEntry) ([]weftv1.InventoryEntry, error) {
+	var standing []weftv1.InventoryEntry
 
 	for _, e := range group {
 		gvk, err := inventory.GroupVersionKind(e)
@@ -176,7 +176,7 @@ func (r *WeaveReconciler) deleteGroup(ctx context.Context, c *kube.Client, weave
 }
 
 // ownedBy reports whether an object still carries this Weave's owner reference.
-func ownedBy(obj *unstructured.Unstructured, weave *v1alpha1.Weave) bool {
+func ownedBy(obj *unstructured.Unstructured, weave *weftv1.Weave) bool {
 	for _, ref := range obj.GetOwnerReferences() {
 		if ref.UID == weave.UID {
 			return true
@@ -186,7 +186,7 @@ func ownedBy(obj *unstructured.Unstructured, weave *v1alpha1.Weave) bool {
 }
 
 // describeEntries renders a short list for a condition message.
-func describeEntries(entries []v1alpha1.InventoryEntry, limit int) string {
+func describeEntries(entries []weftv1.InventoryEntry, limit int) string {
 	if len(entries) == 0 {
 		return ""
 	}

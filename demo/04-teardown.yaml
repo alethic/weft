@@ -17,7 +17,7 @@
 #
 #   kubectl -n weft-demo patch cm layer-middle --type=merge \
 #     -p '{"metadata":{"finalizers":null}}'
-apiVersion: weft.alethic.solutions/v1alpha1
+apiVersion: weft.alethic.solutions/v1
 kind: Weave
 metadata:
   name: teardown

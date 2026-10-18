@@ -3,7 +3,8 @@ IMG ?= ghcr.io/alethic/weft:latest
 # GitVersion owns the version. It is derived from the branch and the history,
 # so nothing is tagged by hand and a build knows what it is without being told.
 # git describe is the fallback for a checkout without the tool installed.
-VERSION ?= $(shell dotnet-gitversion -showvariable SemVer 2>/dev/null | tr -d '' || true)
+VERSION ?= $(shell dotnet-gitversion -showvariable SemVer 2>/dev/null | tr -d '
+' || true)
 ifeq ($(strip $(VERSION)),)
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 endif
@@ -27,12 +28,13 @@ all: generate fmt vet lint test build
 
 .PHONY: generate
 generate: ## Regenerate deepcopy, the CRD and the controller ClusterRole.
-	$(CONTROLLER_GEN) object paths=./api/v1alpha1/...
-	$(CONTROLLER_GEN) crd paths=./api/v1alpha1/... output:crd:artifacts:config=config/crd
+	$(CONTROLLER_GEN) object paths=./api/v1/... paths=./api/v1alpha1/...
+	$(CONTROLLER_GEN) crd paths=./api/v1/... paths=./api/v1alpha1/... output:crd:artifacts:config=config/crd
 	$(CONTROLLER_GEN) rbac:roleName=weft-controller paths=./internal/controller/... output:rbac:artifacts:config=config/rbac
-	# The chart ships the generated CRD verbatim so the two cannot drift.
+	# The chart ships the generated CRDs verbatim so the two cannot drift.
 	# TestChartCRDMatchesGenerated fails if this copy is skipped.
-	cp config/crd/weft.alethic.solutions_weaves.yaml $(CHART)/files/weaves-crd.yaml
+	mkdir -p $(CHART)/files/crds
+	cp config/crd/*.yaml $(CHART)/files/crds/
 
 .PHONY: fmt
 fmt:
@@ -77,7 +79,7 @@ lint-chart: ## Lint and render the chart.
 
 .PHONY: install
 install: ## Install just the CRD.
-	kubectl apply -f config/crd/weft.alethic.solutions_weaves.yaml
+	kubectl apply -f config/crd/
 
 .PHONY: deploy
 deploy: ## Install the controller with Helm.

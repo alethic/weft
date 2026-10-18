@@ -37,7 +37,7 @@ Two properties set it apart:
 ## At a glance
 
 ```yaml
-apiVersion: weft.alethic.solutions/v1alpha1
+apiVersion: weft.alethic.solutions/v1
 kind: Weave
 metadata:
   name: app
@@ -140,7 +140,7 @@ kubectl -n weft-quickstart create configmap tenant --from-literal=tenantId=acme-
 
 ```bash
 kubectl apply -f - <<'EOF'
-apiVersion: weft.alethic.solutions/v1alpha1
+apiVersion: weft.alethic.solutions/v1
 kind: Weave
 metadata:
   name: hello
@@ -188,13 +188,20 @@ workloads.
 | [Operating Weft](docs/operating.md) | status conditions, pruning, teardown, controller flags, metrics, uninstalling |
 | [Design and alternatives](docs/design.md) | how Weft compares with kro, Crossplane, Flux and Kyverno; why Starlark; non-goals |
 | [Helm chart](charts/weft/README.md) | installation, every value, common configurations |
+| [Moving from weft.run](docs/migrating.md) | for installations that predate `weft.alethic.solutions/v1` |
 | [Security](SECURITY.md) | threat model, hardening, reporting a vulnerability |
 
 ## Project status
 
-Weft is **alpha**. The API is `weft.alethic.solutions/v1alpha1`, and its shape may still
-change between minor versions before `1.0`; breaking changes will be called out
-in the release notes.
+The API is `weft.alethic.solutions/v1`. Weft itself is pre-1.0, so the
+controller, the chart and their defaults may still change between minor
+releases. Every such change is called out in the release notes.
+
+Weft was first deployed under the API group `weft.run/v1alpha1`. That group is
+still served alongside v1, with the same schema, so existing installations
+upgrade without changing anything and can move their Weaves to v1 one at a
+time. [docs/migrating.md](docs/migrating.md) explains how. New installations
+can leave it out with `--set legacyAPI.enabled=false`.
 
 CI runs the reconcile loop against a real API server on Kubernetes 1.27 (the
 minimum supported), 1.33 and 1.37, alongside unit tests of the evaluator and

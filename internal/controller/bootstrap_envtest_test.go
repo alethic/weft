@@ -16,6 +16,7 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/api/v1alpha1"
 )
 
@@ -46,6 +47,7 @@ func TestMain(m *testing.M) {
 	scheme := runtime.NewScheme()
 	for _, add := range []func(*runtime.Scheme) error{
 		clientgoscheme.AddToScheme,
+		weftv1.AddToScheme,
 		v1alpha1.AddToScheme,
 		apiextensionsv1.AddToScheme,
 	} {

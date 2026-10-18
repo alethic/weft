@@ -146,6 +146,7 @@ jobs:
           render --set metrics.enabled=false
           render --set crds.install=false
           render --set crds.keep=false
+          render --set legacyAPI.enabled=false
           render --set controller.watchNamespace=team-a
           render --set rbac.impersonation.scope=namespaced --set 'rbac.impersonation.namespaces={a,b}'
           render --set replicaCount=2 --set podDisruptionBudget.enabled=true

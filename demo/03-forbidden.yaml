@@ -9,7 +9,7 @@
 # The condition names the exact verb and resource, and gives you the two
 # commands that fix it. Run them and the Weave resolves itself - then tells you
 # about the next missing permission, one at a time, until it is done.
-apiVersion: weft.alethic.solutions/v1alpha1
+apiVersion: weft.alethic.solutions/v1
 kind: Weave
 metadata:
   name: forbidden

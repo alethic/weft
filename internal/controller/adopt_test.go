@@ -49,7 +49,7 @@ func TestAdoptableBy(t *testing.T) {
 func TestAdoptsOnAWildcard(t *testing.T) {
 	h := newHarness(t, nil)
 	cm := h.configMap("open-house", map[string]string{"owner": "somebody-else"})
-	cm.Annotations = map[string]string{naming.AdoptAnnotation: "*"}
+	cm.Annotations = map[string]string{naming.V1.AdoptAnnotation: "*"}
 	if err := testK8s.Update(h.ctx, cm); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ def compose(variable):
 func TestWildcardThatDoesNotMatchIsRefused(t *testing.T) {
 	h := newHarness(t, nil)
 	cm := h.configMap("prod-only", nil)
-	cm.Annotations = map[string]string{naming.AdoptAnnotation: "prod-*"}
+	cm.Annotations = map[string]string{naming.V1.AdoptAnnotation: "prod-*"}
 	if err := testK8s.Update(h.ctx, cm); err != nil {
 		t.Fatal(err)
 	}

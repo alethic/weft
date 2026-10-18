@@ -2,7 +2,7 @@
 package variables
 
 import (
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/jsonutil"
 )
 
@@ -38,7 +38,7 @@ func Merge(base, over map[string]any) map[string]any {
 // It exists for anything that has to understand a composition without a cluster
 // to read the referenced objects from: tests over the shipped examples, and
 // tooling that wants to know what a program would see from its spec alone.
-func Inline(entries []v1alpha1.Variable) map[string]any {
+func Inline(entries []weftv1.Variable) map[string]any {
 	out := map[string]any{}
 	for _, entry := range entries {
 		if entry.Values == nil {

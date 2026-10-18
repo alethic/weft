@@ -8,10 +8,9 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/inventory"
 	"github.com/alethic/weft/internal/kube"
-	"github.com/alethic/weft/internal/naming"
 )
 
 // releaseAll drops the record of every unowned entry that is no longer
@@ -23,9 +22,9 @@ import (
 // takes our reference back off when we stop setting it, and this catches an
 // object that was already dropped from the returned set in the same pass.
 //
-// What stays is the weft.alethic.solutions/weave label and the weft.alethic.solutions/key annotation, so a
-// released object is still findable as something this Weave once made.
-func (r *WeaveReconciler) releaseAll(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, entries []v1alpha1.InventoryEntry) error {
+// What stays is the provenance label and annotation, so a released object is
+// still findable as something this Weave once made.
+func (r *WeaveReconciler) releaseAll(ctx context.Context, c *kube.Client, weave *weftv1.Weave, entries []weftv1.InventoryEntry) error {
 	log := logf.FromContext(ctx)
 
 	for _, e := range entries {
@@ -73,7 +72,7 @@ func (r *WeaveReconciler) releaseAll(ctx context.Context, c *kube.Client, weave 
 		r.eventf(weave, "Normal", "Released",
 			"let go of %s %q, which was applied %s=false. It is no longer tracked by this Weave and "+
 				"will not be deleted with it.",
-			e.Kind, e.Name, naming.OwnedAnnotation)
+			e.Kind, e.Name, r.Served.API.OwnedAnnotation)
 	}
 
 	return nil
@@ -81,7 +80,7 @@ func (r *WeaveReconciler) releaseAll(ctx context.Context, c *kube.Client, weave 
 
 // partitionOwned splits an inventory into what this Weave may delete and what
 // it only ever tracked.
-func partitionOwned(entries []v1alpha1.InventoryEntry) (owned, unowned []v1alpha1.InventoryEntry) {
+func partitionOwned(entries []weftv1.InventoryEntry) (owned, unowned []weftv1.InventoryEntry) {
 	for _, e := range entries {
 		if e.Owned {
 			owned = append(owned, e)

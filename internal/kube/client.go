@@ -11,6 +11,7 @@ package kube
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -130,7 +131,7 @@ func NewFactory(base *rest.Config, mapper meta.RESTMapper, opts FactoryOptions) 
 	}
 	agent := opts.UserAgent
 	if agent == "" {
-		agent = naming.Group
+		agent = "weft"
 	}
 	size := opts.CacheSize
 	if size <= 0 {
@@ -149,8 +150,26 @@ func NewFactory(base *rest.Config, mapper meta.RESTMapper, opts FactoryOptions) 
 // Mapper exposes the shared RESTMapper.
 func (f *Factory) Mapper() meta.RESTMapper { return f.mapper }
 
-// For returns a client that acts as the given ServiceAccount.
-func (f *Factory) For(namespace, serviceAccount string) (*Client, error) {
+// For returns a client that acts as the given ServiceAccount, on behalf of a
+// Weave in the given API group.
+//
+// The group decides the field manager every write is made under. Server-side
+// apply attributes field ownership to that string, so a weft.run Weave keeps
+// writing as the manager its objects already record, and a v1 Weave never
+// appears as weft.run in anybody's managedFields.
+func (f *Factory) For(api naming.API, namespace, serviceAccount string) (*Client, error) {
+	c, err := f.forIdentity(namespace, serviceAccount)
+	if err != nil {
+		return nil, err
+	}
+	scoped := *c
+	scoped.fieldManager = api.FieldManager
+	return &scoped, nil
+}
+
+// forIdentity returns the cached client for a ServiceAccount. The transport is
+// shared by every group; only the field manager differs.
+func (f *Factory) forIdentity(namespace, serviceAccount string) (*Client, error) {
 	if namespace == "" || serviceAccount == "" {
 		return nil, fmt.Errorf("namespace and serviceAccountName are both required")
 	}
@@ -225,6 +244,7 @@ func expandGroups(groups []string, namespace string) []string {
 type Client struct {
 	namespace      string
 	serviceAccount string
+	fieldManager   string
 	dyn            dynamic.Interface
 	typed          kubernetes.Interface
 	meta           metadata.Interface
@@ -315,7 +335,7 @@ func (c *Client) Apply(ctx context.Context, obj *unstructured.Unstructured) (*un
 	}
 	name := obj.GetName()
 	applied, err := c.dyn.Resource(gvr).Namespace(c.namespace).Apply(ctx, name, obj, metav1.ApplyOptions{
-		FieldManager: naming.FieldManager,
+		FieldManager: c.fieldManager,
 		Force:        true,
 	})
 	if err != nil {
@@ -373,7 +393,7 @@ func (c *Client) MutateFinalizers(ctx context.Context, gvk schema.GroupVersionKi
 			return nil
 		}
 		obj.SetFinalizers(next)
-		if _, err := ri.Update(ctx, obj, metav1.UpdateOptions{FieldManager: naming.FieldManager}); err != nil {
+		if _, err := ri.Update(ctx, obj, metav1.UpdateOptions{FieldManager: c.fieldManager}); err != nil {
 			if apierrors.IsConflict(err) {
 				return err
 			}
@@ -420,7 +440,7 @@ func (c *Client) RemoveOwnerReference(ctx context.Context, gvk schema.GroupVersi
 		}
 
 		obj.SetOwnerReferences(kept)
-		if _, err := ri.Update(ctx, obj, metav1.UpdateOptions{FieldManager: naming.FieldManager}); err != nil {
+		if _, err := ri.Update(ctx, obj, metav1.UpdateOptions{FieldManager: c.fieldManager}); err != nil {
 			if apierrors.IsConflict(err) {
 				return err
 			}
@@ -428,6 +448,100 @@ func (c *Client) RemoveOwnerReference(ctx context.Context, gvk schema.GroupVersi
 		}
 		return nil
 	})
+}
+
+// TransferFieldOwnership hands every field another manager owns through
+// server-side apply over to this client's own manager, and reports whether
+// anything changed.
+//
+// This is how a weft.run Weave's objects become a v1 Weave's. Applying over
+// them would not be enough: the fields would then be co-owned, and a field the
+// old manager still claimed would never be removed when the new program stopped
+// setting it - including the old group's provenance label and annotation, which
+// the new program never sets at all. Renaming the manager makes the new one the
+// sole owner of everything the old one applied, so its next apply prunes
+// exactly what it no longer declares, as if it had always been the one writing.
+//
+// Only Apply entries move. Update entries record the finalizer and owner
+// reference edits made outside apply, which no later apply would release
+// either way.
+//
+// Where this manager already holds an Apply entry for the same API version,
+// the other one is dropped rather than merged. Its fields become unowned and
+// stay as they are; the next apply claims whichever it still declares.
+func (c *Client) TransferFieldOwnership(ctx context.Context, gvk schema.GroupVersionKind, name, from string) (bool, error) {
+	gvr, err := c.resourceFor(gvk)
+	if err != nil {
+		return false, err
+	}
+	ri := c.dyn.Resource(gvr).Namespace(c.namespace)
+
+	changed := false
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		obj, err := ri.Get(ctx, name, metav1.GetOptions{})
+		if err != nil {
+			return asPermissionError(err, c.namespace, c.serviceAccount, "get", gvr, gvk.Kind, name)
+		}
+
+		entries := obj.GetManagedFields()
+		ours := map[string]bool{}
+		for _, e := range entries {
+			if e.Manager == c.fieldManager && e.Operation == metav1.ManagedFieldsOperationApply {
+				ours[e.APIVersion+"/"+e.Subresource] = true
+			}
+		}
+		next := make([]metav1.ManagedFieldsEntry, 0, len(entries))
+		for _, e := range entries {
+			if e.Manager == from && e.Operation == metav1.ManagedFieldsOperationApply {
+				if ours[e.APIVersion+"/"+e.Subresource] {
+					continue
+				}
+				e.Manager = c.fieldManager
+			}
+			next = append(next, e)
+		}
+		if equalManagers(entries, next) {
+			changed = false
+			return nil
+		}
+
+		// A merge patch replaces the list outright. The resourceVersion makes it
+		// conditional, so a write that raced this one is retried rather than
+		// overwritten.
+		patch, err := json.Marshal(map[string]any{
+			"metadata": map[string]any{
+				"resourceVersion": obj.GetResourceVersion(),
+				"managedFields":   next,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := ri.Patch(ctx, name, types.MergePatchType, patch, metav1.PatchOptions{FieldManager: c.fieldManager}); err != nil {
+			if apierrors.IsConflict(err) {
+				return err
+			}
+			return asPermissionError(err, c.namespace, c.serviceAccount, "patch", gvr, gvk.Kind, name)
+		}
+		changed = true
+		return nil
+	})
+	if err != nil {
+		return false, err
+	}
+	return changed, nil
+}
+
+func equalManagers(a, b []metav1.ManagedFieldsEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i].Manager != b[i].Manager {
+			return false
+		}
+	}
+	return true
 }
 
 // CanI asks the API server whether the impersonated subject may perform a verb,

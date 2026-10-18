@@ -100,6 +100,7 @@ pruned, and what it started declaring is applied.
 | `--max-reads` | `100` | distinct resources one evaluation may read |
 | `--max-selected` | `500` | objects one `select()` may match |
 | `--namespace` | *(all)* | restrict the controller to one namespace |
+| `--serve-legacy-api` | `true` | also reconcile `weft.run/v1alpha1` Weaves; see [migrating.md](migrating.md) |
 | `--impersonate-groups` | `system:serviceaccounts,system:authenticated` | see [rbac.md](rbac.md) |
 
 `weft --help` lists the rest. Every flag is exposed as a chart value; see
@@ -108,7 +109,8 @@ pruned, and what it started declaring is applied.
 ## Metrics
 
 `weft_weave_status` reports each `Weave` as ready, waiting or degraded, so
-alerting on "degraded for more than N minutes" is a single expression.
+alerting on "degraded for more than N minutes" is a single expression. Per-Weave
+series are labelled with `group`, `namespace` and `name`.
 Alongside it: resources owned per `Weave`, evaluation duration and outcome,
 applies, prunes, permission denials by verb and resource, and active versus
 degraded watches.
@@ -124,7 +126,7 @@ resources instead, use the verb Kubernetes already has for it:
 kubectl delete weave app --cascade=orphan
 ```
 
-Resources annotated `weft.run/owned: "false"` are never deleted with the
+Resources annotated `weft.alethic.solutions/owned: "false"` are never deleted with the
 `Weave`. See [ownership.md](ownership.md).
 
 ## Uninstalling the controller

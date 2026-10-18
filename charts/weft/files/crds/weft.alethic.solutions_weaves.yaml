@@ -26,7 +26,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    name: v1alpha1
+    name: v1
     schema:
       openAPIV3Schema:
         description: |-
@@ -332,8 +332,8 @@ spec:
                     owned:
                       description: |-
                         Owned records whether this Weave holds an owner reference on the
-                        resource. False means it was applied with weft.alethic.solutions/owned=false and will
-                        never be deleted by this Weave.
+                        resource. False means it was applied with the owned annotation set to
+                        "false" and will never be deleted by this Weave.
 
                         It is remembered here rather than read from the object, because the
                         moment it matters is the moment the program stopped returning it - there

@@ -10,7 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	"github.com/alethic/weft/api/v1alpha1"
+	weftv1 "github.com/alethic/weft/api/v1"
 	"github.com/alethic/weft/internal/kube"
 	"github.com/alethic/weft/internal/metrics"
 )
@@ -29,7 +29,7 @@ import (
 // the same value each time, so an evaluation cannot contradict itself.
 type weaveReader struct {
 	c     *kube.Client
-	weave *v1alpha1.Weave
+	weave *weftv1.Weave
 
 	objects map[string]*unstructured.Unstructured
 	lists   map[string][]unstructured.Unstructured
@@ -40,20 +40,20 @@ type weaveReader struct {
 	kinds map[schema.GroupVersionKind]bool
 
 	// holds is every resource the program asked to hold, by identity.
-	holds map[string]v1alpha1.HeldResource
+	holds map[string]weftv1.HeldResource
 
 	// deleting names the held resources found mid-deletion during this pass.
-	deleting []v1alpha1.HeldResource
+	deleting []weftv1.HeldResource
 }
 
-func newWeaveReader(c *kube.Client, weave *v1alpha1.Weave) *weaveReader {
+func newWeaveReader(c *kube.Client, weave *weftv1.Weave) *weaveReader {
 	return &weaveReader{
 		c:       c,
 		weave:   weave,
 		objects: map[string]*unstructured.Unstructured{},
 		lists:   map[string][]unstructured.Unstructured{},
 		kinds:   map[schema.GroupVersionKind]bool{},
-		holds:   map[string]v1alpha1.HeldResource{},
+		holds:   map[string]weftv1.HeldResource{},
 	}
 }
 
@@ -78,7 +78,7 @@ func (r *weaveReader) Read(ctx context.Context, apiVersion, kind, name string, h
 	}
 
 	if hold && obj != nil {
-		held := v1alpha1.HeldResource{APIVersion: apiVersion, Kind: kind, Name: name}
+		held := weftv1.HeldResource{APIVersion: apiVersion, Kind: kind, Name: name}
 		r.holds[refKey(apiVersion, kind, name)] = held
 		if obj.GetDeletionTimestamp() != nil {
 			r.deleting = append(r.deleting, held)
@@ -152,10 +152,10 @@ func (r *weaveReader) Select(ctx context.Context, apiVersion, kind string, label
 }
 
 // reads returns the recorded read set for the status, in a stable order.
-func (r *weaveReader) reads() []v1alpha1.ReadRef {
-	out := make([]v1alpha1.ReadRef, 0, len(r.kinds))
+func (r *weaveReader) reads() []weftv1.ReadRef {
+	out := make([]weftv1.ReadRef, 0, len(r.kinds))
 	for gvk := range r.kinds {
-		out = append(out, v1alpha1.ReadRef{
+		out = append(out, weftv1.ReadRef{
 			APIVersion: gvk.GroupVersion().String(),
 			Kind:       gvk.Kind,
 		})
@@ -171,8 +171,8 @@ func (r *weaveReader) reads() []v1alpha1.ReadRef {
 
 // requestedHolds returns the hold requests made this pass, in a stable
 // order.
-func (r *weaveReader) requestedHolds() []v1alpha1.HeldResource {
-	out := make([]v1alpha1.HeldResource, 0, len(r.holds))
+func (r *weaveReader) requestedHolds() []weftv1.HeldResource {
+	out := make([]weftv1.HeldResource, 0, len(r.holds))
 	for _, h := range r.holds {
 		out = append(out, h)
 	}

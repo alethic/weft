@@ -131,6 +131,7 @@ parser rejects and the container crash-loops on.
 {{- if $c.watchNamespace }}
 - --namespace={{ $c.watchNamespace }}
 {{- end }}
+- --serve-legacy-api={{ .Values.legacyAPI.enabled }}
 - --impersonate-groups={{ include "weft.impersonateGroups" . }}
 - --prune-delay={{ $c.pruneDelay }}
 - --prune-threshold={{ int $c.pruneThreshold }}

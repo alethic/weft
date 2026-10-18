@@ -12,10 +12,11 @@ import (
 
 // Owner is the object every generated resource is owned by.
 type Owner struct {
-	APIVersion string
-	Kind       string
-	Name       string
-	UID        types.UID
+	// API is the Weave's group. It decides the owner reference's apiVersion
+	// and which keys the provenance is written under.
+	API  naming.API
+	Name string
+	UID  types.UID
 }
 
 // derivedMetadata is server-populated metadata a program will pick up if it
@@ -85,8 +86,8 @@ func Normalize(obj map[string]any, namespace string, owner Owner, owned bool) (*
 		blockOwnerDeletion := true
 		controller := true
 		u.SetOwnerReferences([]metav1.OwnerReference{{
-			APIVersion:         owner.APIVersion,
-			Kind:               owner.Kind,
+			APIVersion:         owner.API.GroupVersion,
+			Kind:               naming.Kind,
 			Name:               owner.Name,
 			UID:                owner.UID,
 			Controller:         &controller,
@@ -98,14 +99,14 @@ func Normalize(obj map[string]any, namespace string, owner Owner, owned bool) (*
 	if labels == nil {
 		labels = map[string]string{}
 	}
-	labels[naming.WeaveLabel] = owner.Name
+	labels[owner.API.WeaveLabel] = owner.Name
 	u.SetLabels(labels)
 
 	annotations := u.GetAnnotations()
 	if annotations == nil {
 		annotations = map[string]string{}
 	}
-	annotations[naming.WeaveUIDAnnotation] = string(owner.UID)
+	annotations[owner.API.WeaveUIDAnnotation] = string(owner.UID)
 	u.SetAnnotations(annotations)
 
 	return u, nil

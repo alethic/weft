@@ -151,9 +151,23 @@ one of those looks arbitrary, read the comment before changing it:
 make generate
 ```
 
-This regenerates the deepcopy functions, the CRD and the controller ClusterRole,
-and copies the CRD into the chart. CI fails if the result differs from what is
-committed, so run it before pushing.
+This regenerates the deepcopy functions, the CRDs and the controller
+ClusterRole, and copies the CRDs into the chart. CI fails if the result differs
+from what is committed, so run it before pushing.
+
+## Two API groups
+
+Weft serves `weft.alethic.solutions/v1` and, for installations that predate it,
+`weft.run/v1alpha1`. The canonical types live in `api/v1`; `api/v1alpha1`
+embeds v1's spec and status, so the schemas cannot drift, and a test asserts
+that the generated CRDs agree. The controller reconciles everything as v1,
+with one reconciler per group (`internal/controller/served.go`).
+
+Every key a Weave writes into a cluster comes from `internal/naming`, per
+group. The `weft.run` identifiers are frozen, and `TestLegacyIdentifiersAreFrozen`
+fails if one changes: they are on objects in clusters that predate v1, and
+changing one strands those objects. [docs/migrating.md](docs/migrating.md)
+describes the handover from one group to the other from the user's side.
 
 ## The parts that are not negotiable
 

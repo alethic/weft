@@ -43,6 +43,18 @@ crds:
   # be able to destroy infrastructure.
   keep: true
 
+# weft.run/v1alpha1 is the API group Weft was first deployed under. It is
+# served alongside weft.alethic.solutions/v1 so that Weaves written against it
+# keep working and can be moved to v1 one at a time; see docs/migrating.md.
+#
+# A cluster that has never had a weft.run Weave can turn this off: its CRD is
+# not installed, the controller does not reconcile it, and the controller is
+# not granted access to it. Turning it off while weft.run Weaves remain leaves
+# them unreconciled, holding finalizers nothing will release - move or reap
+# them first.
+legacyAPI:
+  enabled: true
+
 rbac:
   create: true
 
@@ -75,7 +87,9 @@ controller:
   leaderElection:
     enabled: true
     # Lease name. Change it only to run two independent Weft installations.
-    id: weft.alethic.solutions
+    # It predates v1 and keeps its name so that a rolling upgrade's old and new
+    # replicas contend for the same lease rather than both leading.
+    id: weft.run
 
   # Groups impersonated alongside the ServiceAccount username.
   #

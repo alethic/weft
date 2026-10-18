@@ -18,7 +18,7 @@
 #
 # It orders the deletion of an API object and nothing more. It does not order
 # the destruction of whatever that object represents.
-apiVersion: weft.alethic.solutions/v1alpha1
+apiVersion: weft.alethic.solutions/v1
 kind: Weave
 metadata:
   name: finalizer
