@@ -4,9 +4,8 @@ Weft was first deployed under the API group `weft.run`, at version `v1alpha1`.
 The current API is `weft.alethic.solutions/v1`. This page is for installations
 that have `weft.run` Weaves.
 
-If you have never had a `weft.run` Weave, none of this applies, and you can
-install with `--set legacyAPI.enabled=false` to leave the old group out
-entirely.
+If you have never had a `weft.run` Weave, none of this applies. The old group
+is still served, but nothing uses it.
 
 ## What upgrading does
 
@@ -42,10 +41,9 @@ helm upgrade weft oci://ghcr.io/alethic/charts/weft --version <new> \
 only what you overrode before. `--reuse-values` keeps the old chart's defaults
 too, and that breaks this upgrade. Prerelease charts (`0.1.0-pre.N`) had the
 image digest in their defaults, so `--reuse-values` would keep the old
-controller image under the new chart. The old binary rejects the new chart's
-`--serve-legacy-api` flag, so the new pod would crash-loop while the old one
-kept running. If you do use `--reuse-values`, add `--set image.digest=` to clear
-it.
+controller image under the new chart: the upgrade reports success, but the old
+controller keeps running, and it does not serve v1 at all. If you do use
+`--reuse-values`, add `--set image.digest=` to clear it.
 
 Upgrading with your own `-f values.yaml` and no reuse flag needs nothing extra.
 From the first release onward the published digest ships inside the chart
@@ -179,24 +177,11 @@ Check that nothing is left in the old group:
 kubectl get weaves.weft.run --all-namespaces
 ```
 
-Then stop serving it:
-
-```bash
-helm upgrade weft oci://ghcr.io/alethic/charts/weft --namespace weft-system \
-  --reset-then-reuse-values --set legacyAPI.enabled=false
-```
-
-That stops the controller reconciling `weft.run` and drops its grant on it.
-It does not delete the `weaves.weft.run` CRD, because `crds.keep` leaves CRDs
-in place on purpose. Delete the CRD yourself once the list above is empty:
-
-```bash
-kubectl delete crd weaves.weft.run
-```
-
-Do not turn `legacyAPI.enabled` off while `weft.run` Weaves remain. Nothing
-would reconcile them, and nothing would release their finalizers. They could
-not be deleted, and neither could the objects they hold.
+There is nothing to switch off. Every Weft release serves both groups until a
+future release removes `weft.run` altogether, and that release's notes will say
+so. Before upgrading to it, this list must be empty. A `weft.run` Weave left
+behind would have nothing reconciling it and nothing releasing its finalizers,
+so neither it nor the objects it holds could be deleted.
 
 ## Metrics and dashboards
 

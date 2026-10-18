@@ -61,7 +61,7 @@ infrastructure. Remove them deliberately when you mean to:
 
 ```bash
 kubectl delete crd weaves.weft.alethic.solutions
-kubectl delete crd weaves.weft.run    # if legacyAPI was enabled
+kubectl delete crd weaves.weft.run
 ```
 
 ## Values
@@ -90,12 +90,6 @@ kubectl delete crd weaves.weft.run    # if legacyAPI was enabled
 |---|---|---|
 | `crds.install` | `true` | Turn off when CRDs are managed separately. |
 | `crds.keep` | `true` | Keep the CRDs on uninstall. Read the warning above before changing this. |
-
-### Legacy API
-
-| key | default | |
-|---|---|---|
-| `legacyAPI.enabled` | `true` | Also serve `weft.run/v1alpha1`, the group Weft was first deployed under: install its CRD, grant the controller access to it, and reconcile its Weaves. A cluster that has never had one can turn this off. Turning it off while `weft.run` Weaves remain leaves them unreconciled and holding finalizers. See [docs/migrating.md](../../docs/migrating.md). |
 
 ### RBAC
 

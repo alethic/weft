@@ -5,12 +5,12 @@ generate", so the chart cannot drift from the Go types. Each is parsed here only
 to attach the chart's labels and, when asked, the annotation that keeps it
 through an uninstall.
 
-weft.run is the group Weft was first deployed under, and is installed only
-while legacyAPI.enabled says it is still served.
+Both served groups are always installed: weft.alethic.solutions, and weft.run,
+the group Weft was first deployed under. The controller reconciles both and
+will not start without either.
 */}}
 {{- $root := . }}
 {{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
-{{- if or (include "weft.legacyAPI" $root) (not (hasSuffix "weft.run_weaves.yaml" $path)) }}
 {{- $crd := $root.Files.Get $path | fromYaml }}
 {{- $meta := $crd.metadata }}
 {{- $_ := set $meta "labels" (merge (default (dict) $meta.labels) (include "weft.labels" $root | fromYaml)) }}
@@ -25,6 +25,5 @@ be able to destroy infrastructure.
 {{- $_ := set $crd "metadata" $meta }}
 ---
 {{ toYaml $crd }}
-{{- end }}
 {{- end }}
 {{- end }}

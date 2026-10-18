@@ -133,20 +133,6 @@ Every numeric value is passed through int or int64 on the way out. YAML decodes
 a large integer as a float64, and Helm renders that as 2e+07, which the flag
 parser rejects and the container crash-loops on.
 */}}
-{{- /*
-Whether weft.run/v1alpha1 is served. Missing counts as on, not off: a release
-upgraded with --reuse-values carries the values of a chart that predates this
-key, and reading .Values.legacyAPI.enabled through a missing map fails the
-render outright. Defaulting to on is also the safe direction - off would stop
-reconciling every weft.run Weave in the cluster.
-
-Renders "true" or nothing, so it can be used directly in an if.
-*/}}
-{{- define "weft.legacyAPI" -}}
-{{- $l := .Values.legacyAPI | default dict -}}
-{{- if or (not (hasKey $l "enabled")) $l.enabled }}true{{ end -}}
-{{- end -}}
-
 {{- define "weft.args" -}}
 {{- $c := .Values.controller -}}
 - --health-probe-bind-address=:{{ int .Values.health.port }}
@@ -162,7 +148,6 @@ Renders "true" or nothing, so it can be used directly in an if.
 {{- if $c.watchNamespace }}
 - --namespace={{ $c.watchNamespace }}
 {{- end }}
-- --serve-legacy-api={{ eq (include "weft.legacyAPI" .) "true" }}
 - --impersonate-groups={{ include "weft.impersonateGroups" . }}
 - --prune-delay={{ $c.pruneDelay }}
 - --prune-threshold={{ int $c.pruneThreshold }}

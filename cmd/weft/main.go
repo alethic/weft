@@ -69,7 +69,6 @@ type config struct {
 	leaderElectID  string
 	groups         string
 	watchNamespace string
-	serveLegacy    bool
 
 	// pruneThreshold is bound separately because the flag package has no
 	// int32 variant.
@@ -91,8 +90,6 @@ func bindFlags(fs *flag.FlagSet, c *config) {
 	// both lead at once for the length of the rollout.
 	fs.StringVar(&c.leaderElectID, "leader-election-id", naming.Legacy.Group, "Name of the leader election lease.")
 	fs.StringVar(&c.watchNamespace, "namespace", "", "Restrict to a single namespace. Empty watches all of them.")
-	fs.BoolVar(&c.serveLegacy, "serve-legacy-api", true,
-		"Also reconcile weft.run/v1alpha1 Weaves, the group Weft was first deployed under. Needs its CRD installed.")
 
 	fs.StringVar(&c.groups, "impersonate-groups",
 		strings.Join(kube.DefaultGroups, ","),
@@ -195,9 +192,6 @@ func runManager(args []string) error {
 	//nolint:staticcheck // SA1019: deliberate; see above.
 	recorder := mgr.GetEventRecorderFor("weft")
 	for _, served := range controller.AllServed {
-		if served.API.Group == naming.Legacy.Group && !cfg.serveLegacy {
-			continue
-		}
 		reconciler := &controller.WeaveReconciler{
 			Served:    served,
 			Client:    mgr.GetClient(),

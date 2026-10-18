@@ -397,37 +397,21 @@ func TestChartCRDMatchesGenerated(t *testing.T) {
 	}
 }
 
-// Both groups are served by default, so an upgrade from a release that only
-// knew weft.run keeps every existing Weave reconciled. Turning the legacy group
-// off removes all of it - CRD, grant and controller - together, since any one
-// without the others is a controller that cannot start or a CRD nothing serves.
-func TestChartServesLegacyAPIUnlessDisabled(t *testing.T) {
+// Both groups are always served, so an upgrade from a release that only knew
+// weft.run keeps every existing Weave reconciled. The controller registers a
+// reconciler for each and will not start if either CRD is missing, so the
+// chart installs and grants both, unconditionally.
+func TestChartServesBothAPIs(t *testing.T) {
 	out := renderChart(t)
-	for _, want := range []string{
-		"name: " + naming.V1.CRDName,
-		"name: " + naming.Legacy.CRDName,
-		`apiGroups: ["` + naming.Legacy.Group + `"]`,
-		"--serve-legacy-api=true",
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("default render is missing %q", want)
+	for _, api := range naming.APIs {
+		for _, want := range []string{
+			"name: " + api.CRDName,
+			`apiGroups: ["` + api.Group + `"]`,
+		} {
+			if !strings.Contains(out, want) {
+				t.Errorf("render is missing %q", want)
+			}
 		}
-	}
-
-	out = renderChart(t, "--set", "legacyAPI.enabled=false")
-	if !strings.Contains(out, "name: "+naming.V1.CRDName) {
-		t.Error("disabling the legacy API removed the v1 CRD")
-	}
-	for _, unwanted := range []string{
-		"name: " + naming.Legacy.CRDName,
-		`apiGroups: ["` + naming.Legacy.Group + `"]`,
-	} {
-		if strings.Contains(out, unwanted) {
-			t.Errorf("legacyAPI.enabled=false still renders %q", unwanted)
-		}
-	}
-	if !strings.Contains(out, "--serve-legacy-api=false") {
-		t.Error("legacyAPI.enabled=false must tell the controller not to serve it")
 	}
 }
 
@@ -475,18 +459,6 @@ func TestChartImagePrecedence(t *testing.T) {
 
 	if strings.Contains(readFile(t, "../../charts/weft/values.yaml"), "sha256:") {
 		t.Error("values.yaml carries a digest; --reuse-values would pin upgrades to it")
-	}
-}
-
-// helm upgrade --reuse-values carries the previous release's values, which
-// predate legacyAPI. The chart must render with the key missing altogether -
-// and treat it as on, since off would stop reconciling every weft.run Weave.
-func TestChartRendersWithoutLegacyAPIValue(t *testing.T) {
-	out := renderChart(t, "--set", "legacyAPI=null")
-	for _, want := range []string{"name: " + naming.Legacy.CRDName, "--serve-legacy-api=true"} {
-		if !strings.Contains(out, want) {
-			t.Errorf("with legacyAPI unset the render is missing %q", want)
-		}
 	}
 }
 

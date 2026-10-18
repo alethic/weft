@@ -100,7 +100,6 @@ pruned, and what it started declaring is applied.
 | `--max-reads` | `100` | distinct resources one evaluation may read |
 | `--max-selected` | `500` | objects one `select()` may match |
 | `--namespace` | *(all)* | restrict the controller to one namespace |
-| `--serve-legacy-api` | `true` | also reconcile `weft.run/v1alpha1` Weaves; see [migrating.md](migrating.md) |
 | `--impersonate-groups` | `system:serviceaccounts,system:authenticated` | see [rbac.md](rbac.md) |
 
 `weft --help` lists the rest. Every flag is exposed as a chart value; see

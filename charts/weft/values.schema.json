@@ -43,12 +43,6 @@
         "keep": { "type": "boolean" }
       }
     },
-    "legacyAPI": {
-      "type": "object",
-      "properties": {
-        "enabled": { "type": "boolean" }
-      }
-    },
     "rbac": {
       "type": "object",
       "properties": {
