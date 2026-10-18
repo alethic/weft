@@ -210,9 +210,9 @@ Weave would come as a new API version, not as a change to this one.
 Any change to the controller, the chart or their defaults is called out in the
 notes of the release that makes it.
 
-Builds of `main` between releases are published too, as prereleases such as
-`0.1.1-pre.3`. Helm only installs those with `--devel`; they are for trying a
-fix before it is released, not for running.
+Builds of `main` between releases are published too, as prereleases. Helm only
+installs those with `--devel`; they are for trying a fix before it is released,
+not for running.
 
 Upgrading from a build that predates `weft.alethic.solutions/v1`? Weaves in the
 older `weft.run/v1alpha1` group keep working unchanged, and

@@ -17,8 +17,8 @@ helm install weft oci://ghcr.io/alethic/charts/weft \
 The chart lives in GitHub Packages as an OCI artifact. Without `--version`,
 Helm installs the latest release; pin an exact `--version` from the
 [releases page](https://github.com/alethic/weft/releases) for anything you
-care about. Builds of `main` between releases are published as prereleases
-(`0.1.1-pre.3` and so on), which Helm only considers with `--devel`.
+care about. Builds of `main` between releases are published as prereleases, which Helm
+only considers with `--devel`.
 
 ```bash
 helm show chart oci://ghcr.io/alethic/charts/weft
