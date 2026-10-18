@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/alethic/weft/actions/workflows/weft.yml"><img src="https://github.com/alethic/weft/actions/workflows/weft.yml/badge.svg?branch=main" alt="CI"></a>
-  <a href="https://github.com/alethic/weft/releases"><img src="https://img.shields.io/github/v/release/alethic/weft?include_prereleases&sort=semver" alt="Release"></a>
+  <a href="https://github.com/alethic/weft/releases"><img src="https://img.shields.io/github/v/release/alethic/weft?sort=semver" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/alethic/weft" alt="License"></a>
 </p>
 
@@ -113,13 +113,20 @@ helm install weft oci://ghcr.io/alethic/charts/weft \
   --namespace weft-system --create-namespace
 ```
 
-Pin a version with `--version` for anything you care about. Builds of `main`
-are also published as prereleases; add `--devel` to install the newest one.
+That installs the latest release. Add `--version` with a version from the
+[releases page](https://github.com/alethic/weft/releases) to pin one, which is
+what you want anywhere you care about repeatability.
 
-The controller image (`ghcr.io/alethic/weft`) and the chart are both signed
-with [cosign](https://github.com/sigstore/cosign), keyless. Each
-[release](https://github.com/alethic/weft/releases) lists the image digest and
-the command to verify it. A released chart pins the image by digest.
+Each chart pins the controller image (`ghcr.io/alethic/weft`) by digest, so an
+installed release cannot drift under a moved tag. The image and the chart are
+both signed with [cosign](https://github.com/sigstore/cosign), keyless, and
+each release lists the image digest. To verify an image before you run it:
+
+```bash
+cosign verify ghcr.io/alethic/weft@<digest> \
+  --certificate-identity-regexp '^https://github.com/alethic/weft/' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
 
 Every chart value is documented in [charts/weft/README.md](charts/weft/README.md),
 including hardening options such as confining impersonation to a set of
@@ -191,17 +198,26 @@ workloads.
 | [Moving from weft.run](docs/migrating.md) | for installations that predate `weft.alethic.solutions/v1` |
 | [Security](SECURITY.md) | threat model, hardening, reporting a vulnerability |
 
-## Project status
+## Releases and compatibility
 
-The API is `weft.alethic.solutions/v1`. Weft itself is pre-1.0, so the
-controller, the chart and their defaults may still change between minor
-releases. Every such change is called out in the release notes.
+Releases, with their notes, are on the
+[releases page](https://github.com/alethic/weft/releases). The badge at the
+top shows the current one.
 
-Weft was first deployed under the API group `weft.run/v1alpha1`. That group is
-still served alongside v1, with the same schema, so existing installations
-upgrade without changing anything and can move their Weaves to v1 one at a
-time. [docs/migrating.md](docs/migrating.md) explains how. Both groups are
-served until a future release removes `weft.run`.
+The API is `weft.alethic.solutions/v1`. A change that would break a `v1`
+Weave would come as a new API version, not as a change to this one.
+
+Weft itself is pre-1.0. The controller, the chart and their defaults may still
+change from one release to the next, and every such change is called out in
+that release's notes.
+
+Builds of `main` between releases are published too, as prereleases such as
+`0.1.1-pre.3`. Helm only installs those with `--devel`; they are for trying a
+fix before it is released, not for running.
+
+Upgrading from a build that predates `weft.alethic.solutions/v1`? Weaves in the
+older `weft.run/v1alpha1` group keep working unchanged, and
+[docs/migrating.md](docs/migrating.md) explains how to move them across.
 
 CI runs the reconcile loop against a real API server on Kubernetes 1.27 (the
 minimum supported), 1.33 and 1.37, alongside unit tests of the evaluator and

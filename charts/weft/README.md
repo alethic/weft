@@ -15,8 +15,9 @@ helm install weft oci://ghcr.io/alethic/charts/weft \
 ```
 
 The chart lives in GitHub Packages as an OCI artifact. Without `--version`,
-Helm resolves the newest release; pin an exact `--version` for anything you
-care about. Every build of `main` is also published as a prerelease
+Helm installs the latest release; pin an exact `--version` from the
+[releases page](https://github.com/alethic/weft/releases) for anything you
+care about. Builds of `main` between releases are published as prereleases
 (`0.1.1-pre.3` and so on), which Helm only considers with `--devel`.
 
 ```bash
@@ -24,7 +25,7 @@ helm show chart oci://ghcr.io/alethic/charts/weft
 ```
 
 The chart's `appVersion` selects the image tag, so a chart and the controller it
-installs always carry the same version. A released chart additionally pins
+installs always carry the same version. A published chart additionally pins
 the image by digest, so it cannot drift under a moved tag. That digest ships in
 the chart itself rather than in its values, so `helm upgrade --reuse-values`
 still moves you to the new release's image.
