@@ -10,7 +10,7 @@ while legacyAPI.enabled says it is still served.
 */}}
 {{- $root := . }}
 {{- range $path, $_ := .Files.Glob "files/crds/*.yaml" }}
-{{- if or $root.Values.legacyAPI.enabled (not (hasSuffix "weft.run_weaves.yaml" $path)) }}
+{{- if or (include "weft.legacyAPI" $root) (not (hasSuffix "weft.run_weaves.yaml" $path)) }}
 {{- $crd := $root.Files.Get $path | fromYaml }}
 {{- $meta := $crd.metadata }}
 {{- $_ := set $meta "labels" (merge (default (dict) $meta.labels) (include "weft.labels" $root | fromYaml)) }}

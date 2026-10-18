@@ -431,6 +431,18 @@ func TestChartServesLegacyAPIUnlessDisabled(t *testing.T) {
 	}
 }
 
+// helm upgrade --reuse-values carries the previous release's values, which
+// predate legacyAPI. The chart must render with the key missing altogether -
+// and treat it as on, since off would stop reconciling every weft.run Weave.
+func TestChartRendersWithoutLegacyAPIValue(t *testing.T) {
+	out := renderChart(t, "--set", "legacyAPI=null")
+	for _, want := range []string{"name: " + naming.Legacy.CRDName, "--serve-legacy-api=true"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("with legacyAPI unset the render is missing %q", want)
+		}
+	}
+}
+
 // documentContaining returns the first rendered document containing a marker.
 func documentContaining(t *testing.T, rendered, marker string) string {
 	t.Helper()

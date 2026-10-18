@@ -168,6 +168,7 @@ func newHarness(t *testing.T, tune func(*Options)) *harness {
 	r := &WeaveReconciler{
 		Served:    ServedV1,
 		Client:    testK8s,
+		APIReader: testK8s,
 		Scheme:    testK8s.Scheme(),
 		Factory:   factory,
 		Evaluator: eval.NewStarlark(eval.Options{}),

@@ -127,6 +127,12 @@ type WeaveReconciler struct {
 	// touches goes through the impersonated Factory instead.
 	Client client.Client
 
+	// APIReader reads straight from the API server, bypassing the cache. It is
+	// used where a stale answer would be destructive: whether a Weave in
+	// another group exists decides between handing resources over and tearing
+	// them down. Nil means Client.
+	APIReader client.Reader
+
 	Scheme    *runtime.Scheme
 	Factory   *kube.Factory
 	Evaluator eval.Evaluator
@@ -475,6 +481,15 @@ func (r *WeaveReconciler) reconcileDeletion(ctx context.Context, weave *weftv1.W
 		return r.finishDeletion(ctx, weave, key)
 	}
 
+	// The same Weave already exists in the group that supersedes this one.
+	// This is a move, not a removal - what deploying tools do when a manifest's
+	// apiVersion changes, since they create the new object and then delete the
+	// old one, and none of them can pass --cascade=orphan for it. Tearing down
+	// here would delete everything only for the successor to recreate it.
+	if handed, res, err := r.handOffToSuccessor(ctx, c, weave, key); handed {
+		return res, err
+	}
+
 	// An unowned resource outlives its composition, and the Weave being deleted
 	// is the strongest form of that. It carries no owner reference, so nothing
 	// would collect it anyway; dropping it from the inventory here keeps
@@ -551,6 +566,77 @@ func (r *WeaveReconciler) finishDeletion(ctx context.Context, weave *weftv1.Weav
 	r.Watches.Release(key)
 	metrics.ForgetWeave(r.Served.API.Group, weave.Namespace, weave.Name)
 	return ctrl.Result{}, nil
+}
+
+// handOffToSuccessor lets a deleting Weave go without tearing anything down,
+// when a Weave of the same name exists in the group that supersedes this one.
+// It reports whether it handled the deletion.
+//
+// Letting go means making sure nothing deletes what it made: the owner
+// references it placed are removed first, so the garbage collector has nothing
+// to collect once the finalizer is released. The successor then takes each
+// object over as its program declares it; see handOver.
+//
+// A failure here never falls back to teardown. The successor exists, so
+// teardown is the one outcome that is certainly wrong.
+func (r *WeaveReconciler) handOffToSuccessor(ctx context.Context, c *kube.Client, weave *weftv1.Weave, key watches.Weave) (bool, ctrl.Result, error) {
+	succ, ok := r.Served.API.Successor()
+	if !ok {
+		return false, ctrl.Result{}, nil
+	}
+	exists, deleting, err := r.weaveExists(ctx, succ, weave.Namespace, weave.Name)
+	if err != nil {
+		// Unknown is not "absent". Retrying is cheap; guessing wrong is not.
+		return true, ctrl.Result{}, fmt.Errorf("checking for a %s Weave %q: %w", succ.GroupVersion, weave.Name, err)
+	}
+	if !exists || deleting {
+		return false, ctrl.Result{}, nil
+	}
+
+	log := logf.FromContext(ctx)
+	for _, e := range weave.Status.Inventory {
+		if !e.Owned {
+			continue
+		}
+		gvk, err := inventory.GroupVersionKind(e)
+		if err != nil {
+			continue
+		}
+		if err := c.RemoveOwnerReference(ctx, gvk, e.Name, weave.UID); err != nil && !apierrors.IsNotFound(err) {
+			var perm *kube.PermissionError
+			if errors.As(err, &perm) {
+				before := weave.DeepCopy()
+				markDegraded(weave, ReasonForbidden, fmt.Sprintf(
+					"handing %s %q to the %s Weave of the same name needs permission to update it:\n%s",
+					e.Kind, e.Name, succ.GroupVersion, perm.Error()))
+				if serr := r.writeStatus(ctx, before, weave); serr != nil {
+					log.Error(serr, "writing status during handover")
+				}
+				return true, ctrl.Result{RequeueAfter: r.Opts.DegradedRetry}, nil
+			}
+			return true, ctrl.Result{}, fmt.Errorf("releasing %s %q for handover: %w", e.Kind, e.Name, err)
+		}
+	}
+
+	if err := r.releaseAllHolds(ctx, c, weave); err != nil {
+		log.Error(err, "releasing source finalizers during handover")
+	}
+
+	log.Info("handing resources to the successor rather than tearing them down",
+		"successor", succ.GroupVersion, "resources", len(weave.Status.Inventory))
+	r.eventf(weave, "Normal", "HandingOver",
+		"left %d resources in place for the %s Weave %q, which takes them over",
+		len(weave.Status.Inventory), succ.GroupVersion, weave.Name)
+	res, err := r.finishDeletion(ctx, weave, key)
+	return true, res, err
+}
+
+// reader is the uncached reader, falling back to the client.
+func (r *WeaveReconciler) reader() client.Reader {
+	if r.APIReader != nil {
+		return r.APIReader
+	}
+	return r.Client
 }
 
 // update writes a Weave's metadata and spec back in its own group's type, and

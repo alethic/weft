@@ -106,6 +106,39 @@ the old one is gone. If the old Weave was not deleted at all, the new one is
 `Degraded` and its message gives the exact `kubectl delete … --cascade=orphan`
 command to run.
 
+### With Helm, Flux or another deployment tool
+
+If your Weaves are deployed from a chart or a Kustomization, change the
+`apiVersion` (and any annotation keys) in the manifest and roll it out as one
+release. That is the whole procedure.
+
+Helm, Flux's helm-controller and kustomize-controller all apply a release the
+same way: they create or update everything in the new release first, and only
+then delete what is no longer in it. That deletion uses background propagation,
+and none of them can be told to orphan. So by the time the old Weave is
+deleted, its v1 successor already exists. A `weft.run` Weave that is deleted
+while a live v1 Weave of the same name exists in its namespace does not tear
+anything down. It removes its own owner references, so the garbage collector
+has nothing to collect, records a `HandingOver` event, and lets go. The v1
+Weave then takes each object over as described above.
+
+This depends on the new Weave existing before the old one is deleted. Keep the
+change in a single release:
+
+- **Do not** remove the old Weave in one release and add the new one in a later
+  one.
+- **Do not** move it between two Kustomizations or two HelmReleases in the same
+  change. Each is reconciled on its own schedule, so the old one may be pruned
+  before the new one exists.
+
+If the ordering cannot be guaranteed, delete the old Weave by hand with
+`--cascade=orphan` first, as above, and let the tool's prune find it already
+gone.
+
+Upgrade Weft itself before rolling out any v1 Weave. The release that creates
+one needs the `weaves.weft.alethic.solutions` CRD to exist. If it does not, the
+release fails before it deletes anything, so the old Weave is left untouched.
+
 ### What is not handed over
 
 - **Objects the new program does not declare.** Handover happens as the program

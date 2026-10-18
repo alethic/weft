@@ -340,7 +340,7 @@ func (r *WeaveReconciler) handOver(
 func (r *WeaveReconciler) weaveExists(ctx context.Context, api naming.API, namespace, name string) (exists, deleting bool, err error) {
 	obj := &metav1.PartialObjectMetadata{}
 	obj.SetGroupVersionKind(schema.GroupVersionKind{Group: api.Group, Version: api.Version, Kind: naming.Kind})
-	err = r.Client.Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, obj)
+	err = r.reader().Get(ctx, types.NamespacedName{Namespace: namespace, Name: name}, obj)
 	switch {
 	case apierrors.IsNotFound(err), meta.IsNoMatchError(err):
 		return false, false, nil

@@ -201,6 +201,7 @@ func runManager(args []string) error {
 		reconciler := &controller.WeaveReconciler{
 			Served:    served,
 			Client:    mgr.GetClient(),
+			APIReader: mgr.GetAPIReader(),
 			Scheme:    mgr.GetScheme(),
 			Factory:   factory,
 			Evaluator: evaluator,

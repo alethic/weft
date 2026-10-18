@@ -152,6 +152,16 @@ var (
 	APIs = []API{V1, Legacy}
 )
 
+// Successor returns the group that supersedes this one, if any.
+func (a API) Successor() (API, bool) {
+	for _, s := range APIs {
+		if s.Predecessor != nil && s.Predecessor.Group == a.Group {
+			return s, true
+		}
+	}
+	return API{}, false
+}
+
 // ForGroup returns the API for a group name.
 func ForGroup(group string) (API, bool) {
 	for _, a := range APIs {

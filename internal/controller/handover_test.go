@@ -372,3 +372,87 @@ def compose(variable):
 		t.Error("the weft.run Weave lost its finalizer")
 	}
 }
+
+// What Helm, Flux and anything else that applies manifests do when an
+// apiVersion changes: create the new object, then delete the old one with
+// background propagation. None of them can pass --cascade=orphan, so the old
+// Weave must recognise its successor and let go instead of tearing down.
+func TestLegacyDeletedAfterSuccessorExistsHandsOver(t *testing.T) {
+	h := newHarness(t, nil)
+	h.createLegacy("app", legacyProgram)
+	h.reconcileLegacy("app")
+
+	before := map[string]types.UID{}
+	for _, n := range []string{"settings", "keeper"} {
+		cm, err := h.getConfigMap(n)
+		if err != nil {
+			t.Fatalf("%s not created: %v", n, err)
+		}
+		before[n] = cm.UID
+	}
+
+	// The new release's object first...
+	h.create("app", movedProgram, "")
+	h.settle("app", 1)
+
+	// ...then the old one's removal, as a deploying tool issues it.
+	background := metav1.DeletePropagationBackground
+	if err := testK8s.Delete(h.ctx, h.legacyWeave("app"), &client.DeleteOptions{PropagationPolicy: &background}); err != nil {
+		t.Fatal(err)
+	}
+	h.reconcileLegacy("app")
+
+	if !h.recordedEvent("HandingOver", "weft.alethic.solutions/v1") {
+		t.Error("no HandingOver event")
+	}
+	// The owner references are what the garbage collector acts on, and the
+	// test control plane runs none, so their absence is the assertion.
+	for _, n := range []string{"settings", "keeper"} {
+		cm, err := h.getConfigMap(n)
+		if err != nil {
+			t.Fatalf("%s was torn down: %v", n, err)
+		}
+		for _, ref := range cm.OwnerReferences {
+			if ref.APIVersion == naming.Legacy.GroupVersion {
+				t.Errorf("%s still carries the weft.run owner reference; garbage collection would delete it", n)
+			}
+		}
+	}
+
+	h.settle("app", 3)
+	requireCondition(t, h.weave("app"), naming.ConditionReady, metav1.ConditionTrue)
+	for n, uid := range before {
+		cm, err := h.getConfigMap(n)
+		if err != nil {
+			t.Fatalf("%s is gone: %v", n, err)
+		}
+		if cm.UID != uid {
+			t.Errorf("%s was recreated", n)
+		}
+	}
+	settings, _ := h.getConfigMap("settings")
+	if len(settings.OwnerReferences) != 1 || settings.OwnerReferences[0].APIVersion != naming.V1.GroupVersion {
+		t.Errorf("settings owner references = %+v, want the v1 Weave only", settings.OwnerReferences)
+	}
+}
+
+// Without a successor, deleting a weft.run Weave still means what it always
+// meant.
+func TestLegacyDeletedWithoutSuccessorTearsDown(t *testing.T) {
+	h := newHarness(t, nil)
+	h.createLegacy("app", legacyProgram)
+	h.reconcileLegacy("app")
+
+	if err := testK8s.Delete(h.ctx, h.legacyWeave("app")); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 4; i++ {
+		h.reconcileLegacy("app")
+	}
+	if h.exists("settings") {
+		t.Error("an owned resource survived its weft.run Weave's deletion")
+	}
+	if !h.exists("keeper") {
+		t.Error("an unowned resource was deleted with its weft.run Weave")
+	}
+}
