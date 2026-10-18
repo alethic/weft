@@ -55,14 +55,31 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
 {{/*
-Container image. A digest, when given, wins over the tag: a tag can be moved,
-and a controller that holds impersonation rights is a bad thing to let drift.
+Container image, in order of precedence:
+
+  1. image.digest, when set. A tag can be moved, and a controller that holds
+     impersonation rights is a bad thing to let drift.
+  2. image.tag, when set.
+  3. The digest published with this chart, in files/image-digest. The publish
+     job writes it there; a chart from a checkout has none.
+  4. The chart's appVersion as a tag.
+
+The published digest lives in a file rather than in values.yaml on purpose.
+helm upgrade --reuse-values carries the previous release's values forward in
+place of the new chart's defaults, so a digest in values.yaml would keep the
+previous release's image running under the new chart - whose arguments it may
+not understand.
 */}}
 {{- define "weft.image" -}}
+{{- $published := .Files.Get "files/image-digest" | trim -}}
 {{- if .Values.image.digest -}}
 {{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{- else if .Values.image.tag -}}
+{{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+{{- else if $published -}}
+{{- printf "%s@%s" .Values.image.repository $published -}}
 {{- else -}}
-{{- printf "%s:%s" .Values.image.repository (default .Chart.AppVersion .Values.image.tag) -}}
+{{- printf "%s:%s" .Values.image.repository .Chart.AppVersion -}}
 {{- end -}}
 {{- end -}}
 

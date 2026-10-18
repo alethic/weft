@@ -12,6 +12,9 @@ image:
   # Defaults to the chart's appVersion when empty.
   tag: ""
   # A digest, when set, wins over tag. Pin this in production: a tag can move.
+  #
+  # Left empty, a published chart runs the image digest it was published with,
+  # and a chart from a checkout runs its appVersion tag.
   digest: ""
   pullPolicy: IfNotPresent
 

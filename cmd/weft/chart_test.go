@@ -431,6 +431,53 @@ func TestChartServesLegacyAPIUnlessDisabled(t *testing.T) {
 	}
 }
 
+// The published chart pins its image by a digest written into
+// files/image-digest. It must lose to anything the user set, and must not live
+// in values.yaml, where helm upgrade --reuse-values would carry a previous
+// release's digest - and so its binary - forward under a newer chart.
+func TestChartImagePrecedence(t *testing.T) {
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm is not installed")
+	}
+	const published = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	const user = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS("../../charts/weft")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "files", "image-digest"), []byte(published+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	render := func(args ...string) string {
+		t.Helper()
+		full := append([]string{"template", "weft", dir, "--namespace", "weft-system"}, args...)
+		out, err := exec.Command("helm", full...).CombinedOutput()
+		if err != nil {
+			t.Fatalf("helm template: %v\n%s", err, out)
+		}
+		return string(out)
+	}
+
+	for _, c := range []struct {
+		args []string
+		want string
+	}{
+		{nil, "ghcr.io/alethic/weft@" + published},
+		{[]string{"--set", "image.tag=custom"}, "ghcr.io/alethic/weft:custom"},
+		{[]string{"--set", "image.digest=" + user}, "ghcr.io/alethic/weft@" + user},
+		{[]string{"--set", "image.repository=mirror.example/weft"}, "mirror.example/weft@" + published},
+	} {
+		if out := render(c.args...); !strings.Contains(out, "image: "+c.want) {
+			t.Errorf("with %v the image is not %s", c.args, c.want)
+		}
+	}
+
+	if strings.Contains(readFile(t, "../../charts/weft/values.yaml"), "sha256:") {
+		t.Error("values.yaml carries a digest; --reuse-values would pin upgrades to it")
+	}
+}
+
 // helm upgrade --reuse-values carries the previous release's values, which
 // predate legacyAPI. The chart must render with the key missing altogether -
 // and treat it as on, since off would stop reconciling every weft.run Weave.

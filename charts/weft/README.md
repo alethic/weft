@@ -25,7 +25,9 @@ helm show chart oci://ghcr.io/alethic/charts/weft
 
 The chart's `appVersion` selects the image tag, so a chart and the controller it
 installs always carry the same version. A released chart additionally pins
-`image.digest`, so it cannot drift under a moved tag.
+the image by digest, so it cannot drift under a moved tag. That digest ships in
+the chart itself rather than in its values, so `helm upgrade --reuse-values`
+still moves you to the new release's image.
 
 Or from a checkout:
 
@@ -71,7 +73,7 @@ kubectl delete crd weaves.weft.run    # if legacyAPI was enabled
 | `replicaCount` | `1` | Leader election means only one replica reconciles; a second buys faster handover, not throughput. |
 | `image.repository` | `ghcr.io/alethic/weft` | |
 | `image.tag` | `""` | Falls back to the chart's `appVersion`, which is the version the chart itself carries, so the two never disagree. |
-| `image.digest` | `""` | Wins over `tag` when set. Pin this in production. |
+| `image.digest` | `""` | Wins over `tag` when set. Pin this in production. Left empty, a published chart runs the digest it was published with. |
 | `image.pullPolicy` | `IfNotPresent` | |
 | `imagePullSecrets` | `[]` | |
 | `resources.requests.cpu` | `50m` | |

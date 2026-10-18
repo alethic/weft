@@ -56,8 +56,10 @@ to make.
 The chart and the image always carry the same version. `Chart.yaml` holds a
 placeholder that is replaced at package time, and the chart's `appVersion` is
 what selects the image tag, so a packaged chart points at the image the same run
-pushed. Releases additionally pin `image.digest`, so an installed release cannot
-drift under a moved tag.
+pushed. Every published chart additionally pins the image by digest, written to
+`charts/weft/files/image-digest` rather than `values.yaml` so that
+`helm upgrade --reuse-values` cannot carry an old digest forward, and an
+installed release cannot drift under a moved tag.
 
 `latest` follows real releases only. A prerelease carries a label and never
 moves it.

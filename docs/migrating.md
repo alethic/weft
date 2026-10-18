@@ -25,6 +25,22 @@ side by side:
 - The leader election lease keeps its old name, so during a rolling upgrade the
   old and new controller replicas contend for one lease instead of both acting.
 
+### Upgrading from a 0.1.0 prerelease
+
+Prerelease charts (`0.1.0-pre.N`) stored the image digest in the release's
+values. `helm upgrade --reuse-values` carries that digest forward, so the new
+chart would run the old controller image. The old binary rejects the new
+chart's `--serve-legacy-api` flag, so the new pod crash-loops while the old one
+keeps running. Clear the digest on that first upgrade:
+
+```bash
+helm upgrade weft oci://ghcr.io/alethic/charts/weft --version <new>   --namespace weft-system --reuse-values --set image.digest=
+```
+
+An upgrade without `--reuse-values` needs nothing extra. From the first release
+onward the published digest ships inside the chart rather than its values, so
+this does not recur.
+
 The two schemas are identical. Moving a Weave means changing its `apiVersion`
 and the keys of any Weft annotations in its program. Nothing else changes.
 
