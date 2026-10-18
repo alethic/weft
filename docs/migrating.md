@@ -25,24 +25,31 @@ side by side:
 - The leader election lease keeps its old name, so during a rolling upgrade the
   old and new controller replicas contend for one lease instead of both acting.
 
-### Upgrading from a 0.1.0 prerelease
-
-Prerelease charts (`0.1.0-pre.N`) stored the image digest in the release's
-values. `helm upgrade --reuse-values` carries that digest forward, so the new
-chart would run the old controller image. The old binary rejects the new
-chart's `--serve-legacy-api` flag, so the new pod crash-loops while the old one
-keeps running. Clear the digest on that first upgrade:
-
-```bash
-helm upgrade weft oci://ghcr.io/alethic/charts/weft --version <new>   --namespace weft-system --reuse-values --set image.digest=
-```
-
-An upgrade without `--reuse-values` needs nothing extra. From the first release
-onward the published digest ships inside the chart rather than its values, so
-this does not recur.
-
 The two schemas are identical. Moving a Weave means changing its `apiVersion`
 and the keys of any Weft annotations in its program. Nothing else changes.
+
+### Upgrading from a 0.1.0 prerelease
+
+To keep settings from your existing install, use `--reset-then-reuse-values`,
+not `--reuse-values`:
+
+```bash
+helm upgrade weft oci://ghcr.io/alethic/charts/weft --version <new> \
+  --namespace weft-system --reset-then-reuse-values
+```
+
+`--reset-then-reuse-values` starts from the new chart's defaults and re-applies
+only what you overrode before. `--reuse-values` keeps the old chart's defaults
+too, and that breaks this upgrade. Prerelease charts (`0.1.0-pre.N`) had the
+image digest in their defaults, so `--reuse-values` would keep the old
+controller image under the new chart. The old binary rejects the new chart's
+`--serve-legacy-api` flag, so the new pod would crash-loop while the old one
+kept running. If you do use `--reuse-values`, add `--set image.digest=` to clear
+it.
+
+Upgrading with your own `-f values.yaml` and no reuse flag needs nothing extra.
+From the first release onward the published digest ships inside the chart
+rather than its values, so `--reuse-values` cannot pin it either.
 
 ## Moving one Weave
 
@@ -176,7 +183,7 @@ Then stop serving it:
 
 ```bash
 helm upgrade weft oci://ghcr.io/alethic/charts/weft --namespace weft-system \
-  --reuse-values --set legacyAPI.enabled=false
+  --reset-then-reuse-values --set legacyAPI.enabled=false
 ```
 
 That stops the controller reconciling `weft.run` and drops its grant on it.
