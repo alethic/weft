@@ -17,7 +17,7 @@ CONTROLLER_GEN ?= go tool controller-gen
 SETUP_ENVTEST ?= go tool setup-envtest
 # Pinned so a local run and CI disagree about nothing. Bumping it here is the
 # only place it changes.
-GOLANGCI_LINT_VERSION ?= v2.13.2
+GOLANGCI_LINT_VERSION ?= v2.15.0
 GOLANGCI_LINT ?= $(shell command -v golangci-lint 2>/dev/null || echo $(shell go env GOPATH)/bin/golangci-lint)
 ENVTEST_K8S_VERSION ?= 1.34.x
 ENVTEST_DIR := $(CURDIR)/bin/envtest
