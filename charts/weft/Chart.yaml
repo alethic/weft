@@ -39,13 +39,13 @@ annotations:
   artifacthub.io/crds: |
     - kind: Weave
       version: v1alpha1
-      name: weaves.weft.run
+      name: weaves.weft.alethic.solutions
       displayName: Weave
       description: |
         Reads existing resources in its namespace and generates others from
         them, applying everything as the ServiceAccount it names.
   artifacthub.io/crdsExamples: |
-    - apiVersion: weft.run/v1alpha1
+    - apiVersion: weft.alethic.solutions/v1alpha1
       kind: Weave
       metadata:
         name: app

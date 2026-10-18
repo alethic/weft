@@ -39,7 +39,7 @@ type Item struct {
 	// deleted in descending wave.
 	Wave int32
 
-	// Owned is false when the resource carries weft.run/owned=false. An unowned
+	// Owned is false when the resource carries weft.alethic.solutions/owned=false. An unowned
 	// resource is applied and kept current, but no owner reference is placed on
 	// it and it is never deleted by this Weave.
 	Owned bool

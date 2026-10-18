@@ -381,8 +381,8 @@ Weft stamps provenance on everything it applies:
 
 | | |
 |---|---|
-| `weft.run/weave` | label — the `Weave`'s name, so `kubectl get <kind> -l weft.run/weave=<name>` works |
-| `weft.run/weave-uid` | the `Weave`'s UID |
+| `weft.alethic.solutions/weave` | label — the `Weave`'s name, so `kubectl get <kind> -l weft.alethic.solutions/weave=<name>` works |
+| `weft.alethic.solutions/weave-uid` | the `Weave`'s UID |
 
 Only facts that do not change from pass to pass. A timestamp or a revision here
 would rewrite every object on every reconcile, and each of those writes is a
@@ -466,7 +466,7 @@ provider writes back minutes later only once it is there. A resource Weft
 created behaves exactly like an external one that is not ready, and one rule
 covers both.
 
-### `weft.run/owned: "false"`
+### `weft.alethic.solutions/owned: "false"`
 
 An unowned resource is applied and kept current like any other, but no owner
 reference is placed on it. It is not deleted when the program stops declaring
@@ -475,7 +475,7 @@ it, and not collected when the `Weave` is deleted:
 ```python
 "metadata": {
     "name": "app-db",
-    "annotations": {"weft.run/owned": "false"},
+    "annotations": {"weft.alethic.solutions/owned": "false"},
 }
 ```
 
@@ -491,7 +491,7 @@ depend on.
 
 When such a resource stops being declared, the inventory entry is dropped at
 once — there is no hysteresis, because nothing is being destroyed — and an event
-records what was let go. It keeps its `weft.run/weave` label, so it is still
+records what was let go. It keeps its `weft.alethic.solutions/weave` label, so it is still
 findable as something this `Weave` once made.
 
 The only accepted values are `"true"` and `"false"`. Anything else is refused,
@@ -500,7 +500,7 @@ being deleted.
 
 A resource that already exists and was not created by this `Weave` is refused
 rather than taken over, unless the object itself carries
-`weft.run/adopt: <weave-name>`. See [ownership.md](ownership.md).
+`weft.alethic.solutions/adopt: <weave-name>`. See [ownership.md](ownership.md).
 
 ## Worked example
 

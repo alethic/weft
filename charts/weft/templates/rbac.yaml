@@ -18,13 +18,13 @@ rules:
   # Weaves themselves. update is for the finalizer, which is what buys ordered
   # teardown; without it, deleting a Weave hands everything to cascading
   # collection at once and in no particular order.
-  - apiGroups: ["weft.run"]
+  - apiGroups: ["weft.alethic.solutions"]
     resources: ["weaves"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: ["weft.run"]
+  - apiGroups: ["weft.alethic.solutions"]
     resources: ["weaves/status"]
     verbs: ["get", "update", "patch"]
-  - apiGroups: ["weft.run"]
+  - apiGroups: ["weft.alethic.solutions"]
     resources: ["weaves/finalizers"]
     verbs: ["update"]
 

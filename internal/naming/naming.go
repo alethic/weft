@@ -1,6 +1,6 @@
 // Package naming is the single source of truth for every externally visible
-// identifier Weft writes into a cluster. The API group is provisional; renaming
-// it must be one edit here, so nothing anywhere else may hardcode "weft.run".
+// identifier Weft writes into a cluster. Renaming the API group must be one
+// edit here, so nothing anywhere else may hardcode "weft.alethic.solutions".
 package naming
 
 import (
@@ -11,7 +11,7 @@ import (
 
 const (
 	// Group is the API group. Everything below derives from it.
-	Group = "weft.run"
+	Group = "weft.alethic.solutions"
 	// Version is the current (and only) API version.
 	Version = "v1alpha1"
 	// Kind is the singular kind name.

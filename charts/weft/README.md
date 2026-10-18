@@ -10,17 +10,17 @@ See the [project README](../../README.md) for what a `Weave` is and
 ## Install
 
 ```bash
-helm install weft oci://ghcr.io/alethic/charts/weft --devel \
+helm install weft oci://ghcr.io/alethic/charts/weft \
   --namespace weft-system --create-namespace
 ```
 
-The chart lives in GitHub Packages as an OCI artifact, published on every build
-of `main`. No stable release is cut yet, so `--devel` is needed to resolve a
-prerelease; without it Helm looks for a `1.0`-style version and finds nothing.
-Pin an exact `--version 0.1.0-pre.23` for anything you care about.
+The chart lives in GitHub Packages as an OCI artifact. Without `--version`,
+Helm resolves the newest release; pin an exact `--version` for anything you
+care about. Every build of `main` is also published as a prerelease
+(`0.1.1-pre.3` and so on), which Helm only considers with `--devel`.
 
 ```bash
-helm show chart oci://ghcr.io/alethic/charts/weft --devel
+helm show chart oci://ghcr.io/alethic/charts/weft
 ```
 
 The chart's `appVersion` selects the image tag, so a chart and the controller it
@@ -58,7 +58,7 @@ owns with it — an uninstall should not be able to destroy infrastructure.
 Remove it deliberately when you mean to:
 
 ```bash
-kubectl delete crd weaves.weft.run
+kubectl delete crd weaves.weft.alethic.solutions
 ```
 
 ## Values
@@ -127,7 +127,7 @@ controller:
 |---|---|---|
 | `controller.watchNamespace` | `""` | Restrict to one namespace. Empty watches all. |
 | `controller.leaderElection.enabled` | `true` | |
-| `controller.leaderElection.id` | `weft.run` | Change only to run two independent installations. |
+| `controller.leaderElection.id` | `weft.alethic.solutions` | Change only to run two independent installations. |
 | `controller.impersonateGroups` | `[system:serviceaccounts, system:authenticated]` | Impersonating the username alone yields an identity weaker than the real ServiceAccount, so RBAC bound to `system:authenticated` would silently not apply. |
 | `controller.pruneDelay` | `2m` | How long a resource must be continuously absent before deletion. Raise it above your provider's restart time. |
 | `controller.pruneThreshold` | `3` | Successful evaluations it must also be absent from. |

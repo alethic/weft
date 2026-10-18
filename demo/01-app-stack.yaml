@@ -8,7 +8,7 @@
 #
 #   kubectl -n weft-demo get weave app-stack -w
 #
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: app-stack

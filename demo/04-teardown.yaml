@@ -10,14 +10,14 @@
 #   kubectl -n weft-demo patch cm layer-middle --type=merge \
 #     -p '{"metadata":{"finalizers":["example.test/hold"]}}'
 #   kubectl -n weft-demo delete weave teardown --wait=false
-#   kubectl -n weft-demo get cm -l weft.run/weave=teardown
+#   kubectl -n weft-demo get cm -l weft.alethic.solutions/weave=teardown
 #
 # top is gone, middle is Terminating, and base is untouched - no deletion
 # timestamp at all. Release the hold and the rest drains:
 #
 #   kubectl -n weft-demo patch cm layer-middle --type=merge \
 #     -p '{"metadata":{"finalizers":null}}'
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: teardown

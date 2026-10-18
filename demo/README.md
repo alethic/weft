@@ -6,7 +6,7 @@ Kubernetes types so they run anywhere — including a laptop cluster.
 ## Setup
 
 ```bash
-helm install weft oci://ghcr.io/alethic/charts/weft --devel \
+helm install weft oci://ghcr.io/alethic/charts/weft \
   --namespace weft-system --create-namespace \
   --set controller.pruneDelay=45s
 
@@ -235,7 +235,7 @@ kubectl -n weft-demo delete weave --all
 kubectl delete namespace weft-demo
 kubectl -n weft-system exec deploy/weft -- /weft reap
 helm uninstall weft --namespace weft-system
-kubectl delete crd weaves.weft.run
+kubectl delete crd weaves.weft.alethic.solutions
 ```
 
 Delete the Weaves before the namespace: they hold a finalizer so their resources

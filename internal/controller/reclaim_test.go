@@ -45,7 +45,7 @@ func TestUnownedResourceIsReclaimedAfterStatusLoss(t *testing.T) {
 def compose(variable):
     resource({
         "apiVersion": "v1", "kind": "ConfigMap",
-        "metadata": {"name": "keeper", "annotations": {"weft.run/owned": "false"}},
+        "metadata": {"name": "keeper", "annotations": {"weft.alethic.solutions/owned": "false"}},
         "data": {"v": "1"},
         })
 `, "")

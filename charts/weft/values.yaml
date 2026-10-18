@@ -75,7 +75,7 @@ controller:
   leaderElection:
     enabled: true
     # Lease name. Change it only to run two independent Weft installations.
-    id: weft.run
+    id: weft.alethic.solutions
 
   # Groups impersonated alongside the ServiceAccount username.
   #

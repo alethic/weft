@@ -32,7 +32,7 @@ generate: ## Regenerate deepcopy, the CRD and the controller ClusterRole.
 	$(CONTROLLER_GEN) rbac:roleName=weft-controller paths=./internal/controller/... output:rbac:artifacts:config=config/rbac
 	# The chart ships the generated CRD verbatim so the two cannot drift.
 	# TestChartCRDMatchesGenerated fails if this copy is skipped.
-	cp config/crd/weft.run_weaves.yaml $(CHART)/files/weaves-crd.yaml
+	cp config/crd/weft.alethic.solutions_weaves.yaml $(CHART)/files/weaves-crd.yaml
 
 .PHONY: fmt
 fmt:
@@ -77,7 +77,7 @@ lint-chart: ## Lint and render the chart.
 
 .PHONY: install
 install: ## Install just the CRD.
-	kubectl apply -f config/crd/weft.run_weaves.yaml
+	kubectl apply -f config/crd/weft.alethic.solutions_weaves.yaml
 
 .PHONY: deploy
 deploy: ## Install the controller with Helm.

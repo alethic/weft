@@ -21,7 +21,7 @@ def compose(variable):
             "apiVersion": "v1", "kind": "ConfigMap",
             "metadata": {
                 "name": "keeper",
-                "annotations": {"weft.run/owned": "false"},
+                "annotations": {"weft.alethic.solutions/owned": "false"},
             },
             "data": {"kept": "yes"},
         })
@@ -151,13 +151,13 @@ func TestOwnedAnnotationRejectsAnythingElse(t *testing.T) {
 def compose(variable):
     resource({
         "apiVersion": "v1", "kind": "ConfigMap",
-        "metadata": {"name": "x", "annotations": {"weft.run/owned": "no"}},
+        "metadata": {"name": "x", "annotations": {"weft.alethic.solutions/owned": "no"}},
         })
 `, "")
 	h.settle("typo", 2)
 
 	c := requireCondition(t, h.weave("typo"), naming.ConditionDegraded, metav1.ConditionTrue)
-	if !containsAll(c.Message, "weft.run/owned", `"true"`, `"false"`) {
+	if !containsAll(c.Message, "weft.alethic.solutions/owned", `"true"`, `"false"`) {
 		t.Errorf("message should say what the accepted values are: %s", c.Message)
 	}
 	if h.exists("x") {

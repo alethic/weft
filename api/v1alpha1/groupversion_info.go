@@ -7,7 +7,7 @@
 // the wrong group.
 //
 // +kubebuilder:object:generate=true
-// +groupName=weft.run
+// +groupName=weft.alethic.solutions
 package v1alpha1
 
 import (

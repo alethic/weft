@@ -12,7 +12,7 @@
 ---
 # Recursion turns a step budget into a stack-depth problem, which a step budget
 # does not catch. Rejected by the compiler.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: bound-recursion
@@ -33,7 +33,7 @@ spec:
 ---
 # A program is self-contained. There is nowhere for load() to load from, and
 # saying so at compile time beats a confusing failure during evaluation.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: bound-load
@@ -48,7 +48,7 @@ spec:
 ---
 # Runtime bounding is what replaces the apply-time type checking a
 # schema-generating design would have had.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: bound-budget
@@ -64,7 +64,7 @@ spec:
 ---
 # Same-namespace is the hard rule that makes plain owner references sufficient,
 # so an output reaching outside is refused rather than relocated.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: bound-namespace
@@ -81,7 +81,7 @@ spec:
 ---
 # A namespaced owner cannot own a cluster-scoped object, so it could never be
 # garbage collected. Refused before anything is created.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: bound-cluster-scoped
@@ -98,7 +98,7 @@ spec:
 ---
 # Weft owns what it creates and writes the reference itself. Letting a program
 # set one would let it hand its output to an owner that outlives the Weave.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: bound-owner
@@ -122,7 +122,7 @@ spec:
             })
 ---
 # Declaring one object twice cannot mean two objects.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: bound-declared-twice
@@ -137,7 +137,7 @@ spec:
 # A field that is not set reads as None, but reaching through one does not: a
 # path that assumed an object where there is nothing fails where it happened,
 # rather than producing a resource with a blank field.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: bound-typo

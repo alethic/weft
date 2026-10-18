@@ -162,9 +162,9 @@ func (r *WeaveReconciler) SetupWithManager(mgr ctrl.Manager) error {
 // impersonate on groups is pinned to two names. Granting it unrestricted would
 // let anyone who compromised the controller impersonate system:masters.
 //
-// +kubebuilder:rbac:groups=weft.run,resources=weaves,verbs=get;list;watch;update;patch
-// +kubebuilder:rbac:groups=weft.run,resources=weaves/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=weft.run,resources=weaves/finalizers,verbs=update
+// +kubebuilder:rbac:groups=weft.alethic.solutions,resources=weaves,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=weft.alethic.solutions,resources=weaves/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=weft.alethic.solutions,resources=weaves/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=impersonate
 // +kubebuilder:rbac:groups="",resources=groups,verbs=impersonate,resourceNames=system:serviceaccounts;system:authenticated
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch

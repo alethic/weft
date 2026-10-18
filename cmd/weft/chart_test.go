@@ -372,7 +372,7 @@ func TestChartKeepsTheCRDByDefault(t *testing.T) {
 
 // The chart's CRD is the generated one, so the two cannot drift.
 func TestChartCRDMatchesGenerated(t *testing.T) {
-	generated := readFile(t, "../../config/crd/weft.run_weaves.yaml")
+	generated := readFile(t, "../../config/crd/weft.alethic.solutions_weaves.yaml")
 	shipped := readFile(t, "../../charts/weft/files/weaves-crd.yaml")
 	if generated != shipped {
 		t.Error("charts/weft/files/weaves-crd.yaml differs from the generated CRD; run make generate")
@@ -411,7 +411,7 @@ func TestChartCRDRoundTripIsLossless(t *testing.T) {
 	if err := yaml.Unmarshal([]byte(rendered), &fromChart); err != nil {
 		t.Fatalf("parsing the chart's CRD: %v", err)
 	}
-	if err := yaml.Unmarshal([]byte(readFile(t, "../../config/crd/weft.run_weaves.yaml")), &fromGenerator); err != nil {
+	if err := yaml.Unmarshal([]byte(readFile(t, "../../config/crd/weft.alethic.solutions_weaves.yaml")), &fromGenerator); err != nil {
 		t.Fatalf("parsing the generated CRD: %v", err)
 	}
 

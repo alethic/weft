@@ -8,7 +8,7 @@
 # It is the clearest case for to_yaml(). The original did this by hand in a Go
 # template with careful nindent counts, which is exactly the kind of thing that
 # breaks silently when someone adds a nesting level.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: release-values

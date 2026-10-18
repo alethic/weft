@@ -136,7 +136,7 @@ type InventoryEntry struct {
 	Wave int32 `json:"wave"`
 
 	// Owned records whether this Weave holds an owner reference on the
-	// resource. False means it was applied with weft.run/owned=false and will
+	// resource. False means it was applied with weft.alethic.solutions/owned=false and will
 	// never be deleted by this Weave.
 	//
 	// It is remembered here rather than read from the object, because the

@@ -23,7 +23,7 @@ import (
 // takes our reference back off when we stop setting it, and this catches an
 // object that was already dropped from the returned set in the same pass.
 //
-// What stays is the weft.run/weave label and the weft.run/key annotation, so a
+// What stays is the weft.alethic.solutions/weave label and the weft.alethic.solutions/key annotation, so a
 // released object is still findable as something this Weave once made.
 func (r *WeaveReconciler) releaseAll(ctx context.Context, c *kube.Client, weave *v1alpha1.Weave, entries []v1alpha1.InventoryEntry) error {
 	log := logf.FromContext(ctx)

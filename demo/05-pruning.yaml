@@ -16,7 +16,7 @@
 # infrastructure with it.
 #
 # This install sets pruneDelay to 45s so it can be watched.
-apiVersion: weft.run/v1alpha1
+apiVersion: weft.alethic.solutions/v1alpha1
 kind: Weave
 metadata:
   name: pruning
