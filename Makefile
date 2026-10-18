@@ -3,8 +3,7 @@ IMG ?= ghcr.io/alethic/weft:latest
 # GitVersion owns the version. It is derived from the branch and the history,
 # so nothing is tagged by hand and a build knows what it is without being told.
 # git describe is the fallback for a checkout without the tool installed.
-VERSION ?= $(shell dotnet-gitversion -showvariable SemVer 2>/dev/null | tr -d '
-' || true)
+VERSION ?= $(shell dotnet-gitversion -showvariable SemVer 2>/dev/null | tr -d '\r' || true)
 ifeq ($(strip $(VERSION)),)
 VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 endif
