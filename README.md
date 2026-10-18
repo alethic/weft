@@ -195,33 +195,8 @@ workloads.
 | [Operating Weft](docs/operating.md) | status conditions, pruning, teardown, controller flags, metrics, uninstalling |
 | [Design and alternatives](docs/design.md) | how Weft compares with kro, Crossplane, Flux and Kyverno; why Starlark; non-goals |
 | [Helm chart](charts/weft/README.md) | installation, every value, common configurations |
-| [Moving from weft.run](docs/migrating.md) | for installations that predate `weft.alethic.solutions/v1` |
+| [Moving from weft.run](docs/migrating.md) | for installations that use the older `weft.run` API group |
 | [Security](SECURITY.md) | threat model, hardening, reporting a vulnerability |
-
-## Releases and compatibility
-
-Releases, with their notes, are on the
-[releases page](https://github.com/alethic/weft/releases). The badge at the
-top shows the current one.
-
-The API is `weft.alethic.solutions/v1`. A change that would break a `v1`
-Weave would come as a new API version, not as a change to this one.
-
-Any change to the controller, the chart or their defaults is called out in the
-notes of the release that makes it.
-
-Builds of `main` between releases are published too, as prereleases. Helm only
-installs those with `--devel`; they are for trying a fix before it is released,
-not for running.
-
-Upgrading from a build that predates `weft.alethic.solutions/v1`? Weaves in the
-older `weft.run/v1alpha1` group keep working unchanged, and
-[docs/migrating.md](docs/migrating.md) explains how to move them across.
-
-CI runs the reconcile loop against a real API server on Kubernetes 1.27 (the
-minimum supported), 1.33 and 1.37, alongside unit tests of the evaluator and
-planner, rendering tests of the Helm chart, and a check that every shipped
-example evaluates.
 
 ## Contributing
 
