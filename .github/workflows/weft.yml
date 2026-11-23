@@ -234,13 +234,13 @@ jobs:
           fetch-depth: 0
 
       - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v4
+        uses: gittools/actions/gitversion/setup@v5
         with:
           versionSpec: 6.x
 
       - name: Execute GitVersion
         id: GitVersion
-        uses: gittools/actions/gitversion/execute@v4
+        uses: gittools/actions/gitversion/execute@v5
 
       # One derived string feeds the image tags, the chart, the binary and the
       # release tag. Nothing here is ever typed by hand, which is the only
